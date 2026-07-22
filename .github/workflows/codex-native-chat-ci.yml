@@ -56,6 +56,16 @@ jobs:
             --path tests/codex_native_chat \
             --script res://smoke_test.gd 2>&1 | tee linux-smoke-test.log
 
+      - name: Run full dock workflow smoke test
+        env:
+          CI: "true"
+        run: |
+          set -o pipefail
+          ./Godot_v4.6.3-stable_linux.x86_64 \
+            --headless \
+            --path tests/codex_native_chat \
+            --script res://dock_smoke_test.gd 2>&1 | tee linux-dock-smoke-test.log
+
       - name: Run official Codex app-server smoke test
         env:
           CI: "true"
@@ -74,6 +84,7 @@ jobs:
           path: |
             linux-editor-load.log
             linux-smoke-test.log
+            linux-dock-smoke-test.log
             linux-official-codex.log
           if-no-files-found: ignore
 
@@ -133,6 +144,17 @@ jobs:
             --script res://smoke_test.gd 2>&1 | Tee-Object -FilePath windows-smoke-test.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run full dock workflow smoke test
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe `
+            --headless `
+            --path tests/codex_native_chat `
+            --script res://dock_smoke_test.gd 2>&1 | Tee-Object -FilePath windows-dock-smoke-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Run official Codex app-server smoke test
         shell: pwsh
         env:
@@ -152,5 +174,6 @@ jobs:
           path: |
             windows-editor-load.log
             windows-smoke-test.log
+            windows-dock-smoke-test.log
             windows-official-codex.log
           if-no-files-found: ignore
