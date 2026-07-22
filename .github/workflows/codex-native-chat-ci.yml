@@ -1,0 +1,49 @@
+name: Codex Native Chat CI
+
+on:
+  push:
+    branches:
+      - agent/godot-codex-native-chat
+  pull_request:
+    paths:
+      - "addons/codex_native_chat/**"
+      - "tests/codex_native_chat/**"
+      - ".github/workflows/codex-native-chat-ci.yml"
+
+jobs:
+  godot-smoke-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Godot 4.6.3
+        run: |
+          curl -L --retry 3 -o godot.zip \
+            https://github.com/godotengine/godot/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip
+          unzip -q godot.zip
+          chmod +x Godot_v4.6.3-stable_linux.x86_64
+
+      - name: Prepare smoke project
+        run: |
+          mkdir -p tests/codex_native_chat/addons
+          cp -R addons/codex_native_chat tests/codex_native_chat/addons/
+
+      - name: Load addon in the Godot editor
+        env:
+          CI: "true"
+        run: |
+          ./Godot_v4.6.3-stable_linux.x86_64 \
+            --headless \
+            --path tests/codex_native_chat \
+            --editor \
+            --quit-after 5
+
+      - name: Run GDScript smoke tests
+        env:
+          CI: "true"
+        run: |
+          ./Godot_v4.6.3-stable_linux.x86_64 \
+            --headless \
+            --path tests/codex_native_chat \
+            --script res://smoke_test.gd
