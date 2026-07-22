@@ -1,6 +1,7 @@
 name: Codex Native Chat CI
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - agent/godot-codex-native-chat
@@ -223,3 +224,29 @@ jobs:
             windows-controls-smoke-test.log
             windows-official-codex.log
           if-no-files-found: ignore
+
+  package-addon:
+    needs:
+      - linux-smoke-test
+      - windows-smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build installable addon archive
+        run: |
+          mkdir -p dist/addons
+          cp -R addons/codex_native_chat dist/addons/
+          cd dist
+          zip -qr ../codex-native-chat-addon-1.0.0.zip addons
+          cd ..
+          sha256sum codex-native-chat-addon-1.0.0.zip > codex-native-chat-addon-1.0.0.zip.sha256
+
+      - name: Upload installable addon
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-native-chat-addon-1.0.0
+          path: |
+            codex-native-chat-addon-1.0.0.zip
+            codex-native-chat-addon-1.0.0.zip.sha256
+          if-no-files-found: error
