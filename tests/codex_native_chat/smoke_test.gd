@@ -64,7 +64,8 @@ func _test_app_server_transport() -> bool:
 	_mock_client.protocol_error.connect(_on_mock_protocol_error)
 	_mock_client.stderr_received.connect(_on_mock_stderr)
 
-	var mock_path := ProjectSettings.globalize_path("res://mock_codex.py")
+	var mock_file := "mock_codex.cmd" if OS.get_name() == "Windows" else "mock_codex.py"
+	var mock_path := ProjectSettings.globalize_path("res://" + mock_file)
 	var start_result: Dictionary = _mock_client.start(mock_path)
 	if not bool(start_result.get("success", false)):
 		return _fail("Mock app-server failed to start: %s" % start_result.get("error", ""))
