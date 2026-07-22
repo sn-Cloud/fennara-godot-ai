@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import sys
 
 
@@ -7,6 +8,8 @@ def emit(message):
     sys.stdout.write(json.dumps(message, separators=(",", ":")) + "\n")
     sys.stdout.flush()
 
+
+emit({"method": "mock/started", "params": {"pid": os.getpid(), "argv": sys.argv}})
 
 for raw_line in sys.stdin:
     raw_line = raw_line.strip()
