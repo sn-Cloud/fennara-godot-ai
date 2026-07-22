@@ -46,8 +46,7 @@ jobs:
           CI: "true"
         run: |
           set -o pipefail
-          strace -ff -e trace=read,write -s 2048 -o transport-strace \
-            ./Godot_v4.6.3-stable_linux.x86_64 \
+          ./Godot_v4.6.3-stable_linux.x86_64 \
             --headless \
             --path tests/codex_native_chat \
             --script res://smoke_test.gd 2>&1 | tee smoke-test.log
@@ -60,5 +59,4 @@ jobs:
           path: |
             editor-load.log
             smoke-test.log
-            transport-strace*
           if-no-files-found: ignore
