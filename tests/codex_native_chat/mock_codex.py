@@ -104,6 +104,64 @@ def emit_approval_suite_rejected_command():
     })
 
 
+def emit_completed_dock_turn():
+    emit({
+        "method": "item/commandExecution/outputDelta",
+        "params": {
+            "threadId": "dock-thread-1",
+            "turnId": "dock-turn-1",
+            "itemId": "dock-command-1",
+            "delta": "Godot verification passed.\n",
+        },
+    })
+    emit({
+        "method": "item/completed",
+        "params": {
+            "threadId": "dock-thread-1",
+            "turnId": "dock-turn-1",
+            "item": {
+                "id": "dock-command-1",
+                "type": "commandExecution",
+                "command": "godot --headless --path . --quit",
+                "status": "completed",
+                "exitCode": 0,
+            },
+        },
+    })
+    emit({
+        "method": "item/agentMessage/delta",
+        "params": {
+            "threadId": "dock-thread-1",
+            "turnId": "dock-turn-1",
+            "itemId": "dock-agent-1",
+            "delta": "The Godot task was completed and verified through Godot MCP Native.",
+        },
+    })
+    emit({
+        "method": "item/completed",
+        "params": {
+            "threadId": "dock-thread-1",
+            "turnId": "dock-turn-1",
+            "item": {
+                "id": "dock-agent-1",
+                "type": "agentMessage",
+                "text": "The Godot task was completed and verified through Godot MCP Native.",
+            },
+        },
+    })
+    emit({
+        "method": "turn/completed",
+        "params": {
+            "threadId": "dock-thread-1",
+            "turn": {
+                "id": "dock-turn-1",
+                "status": "completed",
+                "items": [],
+            },
+        },
+    })
+
+
 client_name = ""
 transport_approval_pending = False
 dock_approval_pending = False
@@ -163,6 +221,41 @@ for raw_line in sys.stdin:
             },
         })
 
+    elif method == "account/logout":
+        emit({"id": request_id, "result": {}})
+        emit({
+            "method": "account/updated",
+            "params": {
+                "authMode": None,
+                "planType": None,
+            },
+        })
+
+    elif method == "account/login/start":
+        emit({
+            "id": request_id,
+            "result": {
+                "type": "chatgpt",
+                "loginId": "mock-login-1",
+                "authUrl": "",
+            },
+        })
+        emit({
+            "method": "account/login/completed",
+            "params": {
+                "loginId": "mock-login-1",
+                "success": True,
+                "error": None,
+            },
+        })
+        emit({
+            "method": "account/updated",
+            "params": {
+                "authMode": "chatgpt",
+                "planType": "plus",
+            },
+        })
+
     elif method == "config/mcpServer/reload":
         emit({"id": request_id, "result": {}})
 
@@ -198,13 +291,23 @@ for raw_line in sys.stdin:
         emit({"method": "thread/started", "params": {"thread": thread}})
 
     elif method == "turn/start":
+        prompt = ""
+        input_items = params.get("input") or []
+        if input_items:
+            prompt = input_items[0].get("text", "")
+
+        turn_id = "interrupt-turn-1" if "interrupt-me" in prompt else "dock-turn-1"
         turn = {
-            "id": "dock-turn-1",
+            "id": turn_id,
             "status": "inProgress",
             "items": [],
         }
         emit({"id": request_id, "result": {"turn": turn}})
         emit({"method": "turn/started", "params": {"threadId": params.get("threadId"), "turn": turn}})
+
+        if "interrupt-me" in prompt:
+            continue
+
         emit({
             "method": "item/started",
             "params": {
@@ -269,61 +372,7 @@ for raw_line in sys.stdin:
 
     elif request_id == "dock-approval-1" and dock_approval_pending and "result" in message:
         dock_approval_pending = False
-        emit({
-            "method": "item/commandExecution/outputDelta",
-            "params": {
-                "threadId": "dock-thread-1",
-                "turnId": "dock-turn-1",
-                "itemId": "dock-command-1",
-                "delta": "Godot verification passed.\n",
-            },
-        })
-        emit({
-            "method": "item/completed",
-            "params": {
-                "threadId": "dock-thread-1",
-                "turnId": "dock-turn-1",
-                "item": {
-                    "id": "dock-command-1",
-                    "type": "commandExecution",
-                    "command": "godot --headless --path . --quit",
-                    "status": "completed",
-                    "exitCode": 0,
-                },
-            },
-        })
-        emit({
-            "method": "item/agentMessage/delta",
-            "params": {
-                "threadId": "dock-thread-1",
-                "turnId": "dock-turn-1",
-                "itemId": "dock-agent-1",
-                "delta": "The Godot task was completed and verified through Godot MCP Native.",
-            },
-        })
-        emit({
-            "method": "item/completed",
-            "params": {
-                "threadId": "dock-thread-1",
-                "turnId": "dock-turn-1",
-                "item": {
-                    "id": "dock-agent-1",
-                    "type": "agentMessage",
-                    "text": "The Godot task was completed and verified through Godot MCP Native.",
-                },
-            },
-        })
-        emit({
-            "method": "turn/completed",
-            "params": {
-                "threadId": "dock-thread-1",
-                "turn": {
-                    "id": "dock-turn-1",
-                    "status": "completed",
-                    "items": [],
-                },
-            },
-        })
+        emit_completed_dock_turn()
 
     elif request_id == "suite-file" and approval_suite_active and "result" in message:
         if message.get("result", {}).get("decision") != "acceptForSession":
