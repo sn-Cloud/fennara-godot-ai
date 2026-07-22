@@ -11,7 +11,7 @@ on:
       - ".github/workflows/codex-native-chat-ci.yml"
 
 jobs:
-  godot-smoke-test:
+  linux-smoke-test:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -39,9 +39,9 @@ jobs:
             --headless \
             --path tests/codex_native_chat \
             --editor \
-            --quit-after 5 2>&1 | tee editor-load.log
+            --quit-after 5 2>&1 | tee linux-editor-load.log
 
-      - name: Run GDScript smoke tests
+      - name: Run GDScript and transport smoke tests
         env:
           CI: "true"
         run: |
@@ -49,14 +49,74 @@ jobs:
           ./Godot_v4.6.3-stable_linux.x86_64 \
             --headless \
             --path tests/codex_native_chat \
-            --script res://smoke_test.gd 2>&1 | tee smoke-test.log
+            --script res://smoke_test.gd 2>&1 | tee linux-smoke-test.log
 
-      - name: Upload Godot logs
+      - name: Upload Linux logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: codex-native-chat-godot-logs
+          name: codex-native-chat-linux-logs
           path: |
-            editor-load.log
-            smoke-test.log
+            linux-editor-load.log
+            linux-smoke-test.log
+          if-no-files-found: ignore
+
+  windows-smoke-test:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Python
+        shell: pwsh
+        run: python --version
+
+      - name: Install Godot 4.6.3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Invoke-WebRequest `
+            -Uri "https://github.com/godotengine/godot/releases/download/4.6.3-stable/Godot_v4.6.3-stable_win64.exe.zip" `
+            -OutFile "godot.zip"
+          Expand-Archive -Path "godot.zip" -DestinationPath "." -Force
+
+      - name: Prepare smoke project
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "tests/codex_native_chat/addons" | Out-Null
+          Copy-Item -Recurse -Force `
+            "addons/codex_native_chat" `
+            "tests/codex_native_chat/addons/"
+
+      - name: Load addon in the Godot editor
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe `
+            --headless `
+            --path tests/codex_native_chat `
+            --editor `
+            --quit-after 5 2>&1 | Tee-Object -FilePath windows-editor-load.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run GDScript and cmd transport smoke tests
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe `
+            --headless `
+            --path tests/codex_native_chat `
+            --script res://smoke_test.gd 2>&1 | Tee-Object -FilePath windows-smoke-test.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-native-chat-windows-logs
+          path: |
+            windows-editor-load.log
+            windows-smoke-test.log
           if-no-files-found: ignore
