@@ -3,6 +3,8 @@ extends SceneTree
 var _client: Object
 var _initialize_seen := false
 var _account_seen := false
+var _mcp_reload_seen := false
+var _mcp_status_seen := false
 var _error := ""
 
 func _init() -> void:
@@ -35,10 +37,10 @@ func _run() -> void:
 		_fail("Official Codex initialize request was not sent.")
 		return
 
-	var deadline := Time.get_ticks_msec() + 20000
+	var deadline := Time.get_ticks_msec() + 30000
 	while Time.get_ticks_msec() < deadline:
 		_client.poll()
-		if _initialize_seen and _account_seen:
+		if _initialize_seen and _account_seen and _mcp_reload_seen and _mcp_status_seen:
 			break
 		if not _error.is_empty():
 			break
@@ -54,6 +56,12 @@ func _run() -> void:
 	if not _account_seen:
 		_fail("Official Codex app-server did not answer account/read.")
 		return
+	if not _mcp_reload_seen:
+		_fail("Official Codex app-server did not reload MCP configuration.")
+		return
+	if not _mcp_status_seen:
+		_fail("Official Codex app-server did not answer mcpServerStatus/list.")
+		return
 
 	print("Official Codex app-server smoke test passed.")
 	quit(0)
@@ -68,6 +76,12 @@ func _on_response_received(_request_id: Variant, method: String, _result: Varian
 		_client.send_request("account/read", {"refreshToken": false})
 	elif method == "account/read":
 		_account_seen = true
+		_client.send_request("config/mcpServer/reload", {})
+	elif method == "config/mcpServer/reload":
+		_mcp_reload_seen = true
+		_client.send_request("mcpServerStatus/list", {})
+	elif method == "mcpServerStatus/list":
+		_mcp_status_seen = true
 
 func _on_protocol_error(message: String, raw_line: String) -> void:
 	_error = "Official Codex protocol error: %s %s" % [message, raw_line]
