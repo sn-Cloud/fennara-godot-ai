@@ -13,7 +13,7 @@ on:
 jobs:
   linux-smoke-test:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -23,6 +23,11 @@ jobs:
             https://github.com/godotengine/godot/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip
           unzip -q godot.zip
           chmod +x Godot_v4.6.3-stable_linux.x86_64
+
+      - name: Install official Codex CLI
+        run: |
+          npm install --global @openai/codex
+          codex --version
 
       - name: Prepare smoke project
         run: |
@@ -41,7 +46,7 @@ jobs:
             --editor \
             --quit-after 5 2>&1 | tee linux-editor-load.log
 
-      - name: Run GDScript and transport smoke tests
+      - name: Run GDScript and mock transport smoke tests
         env:
           CI: "true"
         run: |
@@ -51,6 +56,16 @@ jobs:
             --path tests/codex_native_chat \
             --script res://smoke_test.gd 2>&1 | tee linux-smoke-test.log
 
+      - name: Run official Codex app-server smoke test
+        env:
+          CI: "true"
+        run: |
+          set -o pipefail
+          ./Godot_v4.6.3-stable_linux.x86_64 \
+            --headless \
+            --path tests/codex_native_chat \
+            --script res://official_codex_smoke_test.gd 2>&1 | tee linux-official-codex.log
+
       - name: Upload Linux logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -59,11 +74,12 @@ jobs:
           path: |
             linux-editor-load.log
             linux-smoke-test.log
+            linux-official-codex.log
           if-no-files-found: ignore
 
   windows-smoke-test:
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -79,6 +95,12 @@ jobs:
             -Uri "https://github.com/godotengine/godot/releases/download/4.6.3-stable/Godot_v4.6.3-stable_win64.exe.zip" `
             -OutFile "godot.zip"
           Expand-Archive -Path "godot.zip" -DestinationPath "." -Force
+
+      - name: Install official Codex CLI
+        shell: pwsh
+        run: |
+          npm install --global @openai/codex
+          codex --version
 
       - name: Prepare smoke project
         shell: pwsh
@@ -111,6 +133,17 @@ jobs:
             --script res://smoke_test.gd 2>&1 | Tee-Object -FilePath windows-smoke-test.log
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run official Codex app-server smoke test
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe `
+            --headless `
+            --path tests/codex_native_chat `
+            --script res://official_codex_smoke_test.gd 2>&1 | Tee-Object -FilePath windows-official-codex.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Upload Windows logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -119,4 +152,5 @@ jobs:
           path: |
             windows-editor-load.log
             windows-smoke-test.log
+            windows-official-codex.log
           if-no-files-found: ignore
