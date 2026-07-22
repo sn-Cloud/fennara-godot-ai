@@ -1,0 +1,13 @@
+; Godot AI Manager smoke project
+config_version=5
+
+[application]
+config/name="Godot AI Manager Smoke Test"
+run/main_scene=""
+
+[editor_plugins]
+enabled=PackedStringArray("res://addons/godot_ai_manager/plugin.cfg")
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"

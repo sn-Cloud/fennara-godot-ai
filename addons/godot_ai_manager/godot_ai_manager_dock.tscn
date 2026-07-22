@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://addons/godot_ai_manager/godot_ai_manager_dock.gd" id="1_dock"]
+
+[node name="GodotAiManagerDock" type="PanelContainer"]
+script = ExtResource("1_dock")

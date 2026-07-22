@@ -1,0 +1,5 @@
+Godot AI Manager is a Godot 4.6+ editor plugin with two official agent backends:
+- OpenAI Codex through codex app-server and ChatGPT/Codex account login.
+- Moonshot AI Kimi Code through kimi acp and kimi login device OAuth.
+Godot-specific tools come exclusively from the separately installed Godot MCP Native project.
+The repository intentionally excludes Fennara MCP, daemon, CLI, bridge, and tool runtime.
