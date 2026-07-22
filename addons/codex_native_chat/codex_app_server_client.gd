@@ -134,7 +134,7 @@ func send_request(method: String, params: Dictionary = {}) -> int:
 
 	var request_id := _next_request_id
 	_next_request_id += 1
-	_pending_methods[str(request_id)] = method
+	_pending_methods[_request_id_key(request_id)] = method
 	_write_message({
 		"id": request_id,
 		"method": method,
@@ -390,8 +390,9 @@ func _parse_message(line: String) -> void:
 
 	if message.has("id"):
 		var request_id: Variant = message.get("id")
-		var method := str(_pending_methods.get(str(request_id), ""))
-		_pending_methods.erase(str(request_id))
+		var request_key := _request_id_key(request_id)
+		var method := str(_pending_methods.get(request_key, ""))
+		_pending_methods.erase(request_key)
 		response_received.emit(
 			request_id,
 			method,
@@ -491,6 +492,15 @@ func _command_search(command: String, arguments: PackedStringArray) -> Array[Str
 		if not value.is_empty():
 			values.append(value)
 	return values
+
+func _request_id_key(value: Variant) -> String:
+	if value is int:
+		return str(value)
+	if value is float:
+		var numeric := float(value)
+		if is_equal_approx(numeric, round(numeric)):
+			return str(int(round(numeric)))
+	return str(value)
 
 func _as_dictionary(value: Variant) -> Dictionary:
 	if value is Dictionary:
