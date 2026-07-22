@@ -1,5 +1,0 @@
--std=c++17
--Iinclude
--Igodot-cpp/gdextension
--Igodot-cpp/gen/include
--Igodot-cpp/include

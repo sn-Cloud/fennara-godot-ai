@@ -1,8 +1,0 @@
-.scons_cache/
-.sconsign.dblite
-*.obj
-*.os
-*.o
-*.lib
-*.exp
-*.pdb
