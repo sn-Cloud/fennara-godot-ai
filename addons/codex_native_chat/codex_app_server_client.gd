@@ -14,14 +14,16 @@ signal protocol_error(message: String, raw_line: String)
 var _pid: int = -1
 var _stdio: FileAccess
 var _stderr: FileAccess
-var _stdout_thread: Thread
+var _stdio_thread: Thread
 var _stderr_thread: Thread
-var _stdout_thread_started := false
+var _stdio_thread_started := false
 var _stderr_thread_started := false
-var _reader_stop := false
+var _io_stop := false
 var _queue_mutex := Mutex.new()
+var _outgoing_lines: Array[String] = []
 var _stdout_lines: Array[String] = []
 var _stderr_lines: Array[String] = []
+var _protocol_errors: Array[Dictionary] = []
 var _next_request_id: int = 1
 var _pending_methods: Dictionary = {}
 var _running: bool = false
@@ -47,7 +49,7 @@ func start(preferred_path: String = "") -> Dictionary:
 
 	var executable := str(launch.get("executable", ""))
 	var arguments := launch.get("arguments", PackedStringArray()) as PackedStringArray
-	var process := OS.execute_with_pipe(executable, arguments, true)
+	var process := OS.execute_with_pipe(executable, arguments, false)
 	if process.is_empty():
 		var error_message := "Failed to start Codex app-server with %s." % executable
 		status_changed.emit("failed")
@@ -65,8 +67,8 @@ func start(preferred_path: String = "") -> Dictionary:
 	_launch_description = str(launch.get("description", executable))
 	_pending_methods.clear()
 	_next_request_id = 1
-	_reader_stop = false
-	_clear_line_queues()
+	_io_stop = false
+	_clear_queues()
 
 	if not _running:
 		shutdown("invalid_pipe")
@@ -78,15 +80,15 @@ func start(preferred_path: String = "") -> Dictionary:
 			"error": "Codex process started without a usable stdio pipe.",
 		}
 
-	var thread_result := _start_reader_threads()
+	var thread_result := _start_io_threads()
 	if thread_result != OK:
-		shutdown("reader_thread_failed")
+		shutdown("io_thread_failed")
 		status_changed.emit("failed")
 		return {
 			"success": false,
 			"pid": -1,
 			"executable": executable,
-			"error": "Could not start Codex pipe reader thread (error %s)." % thread_result,
+			"error": "Could not start Codex pipe I/O thread (error %s)." % thread_result,
 		}
 
 	status_changed.emit("running")
@@ -103,7 +105,9 @@ func shutdown(reason: String = "shutdown") -> void:
 	var had_process := old_pid > 0
 	_running = false
 	_pid = -1
-	_reader_stop = true
+	_io_stop = true
+
+	_wait_for_io_threads()
 
 	if old_pid > 0 and OS.is_process_running(old_pid):
 		OS.kill(old_pid)
@@ -113,13 +117,11 @@ func shutdown(reason: String = "shutdown") -> void:
 	if _stderr != null:
 		_stderr.close()
 
-	_wait_for_reader_threads()
-	_drain_line_queues()
-
+	_drain_queues()
 	_stdio = null
 	_stderr = null
 	_pending_methods.clear()
-	_clear_line_queues()
+	_clear_queues()
 
 	if had_process:
 		status_changed.emit("stopped")
@@ -174,106 +176,195 @@ func poll() -> void:
 	if not _running:
 		return
 
-	_drain_line_queues()
+	_drain_queues()
 	if _pid > 0 and not OS.is_process_running(_pid):
 		shutdown("process_exited")
 
-func _start_reader_threads() -> Error:
-	_stdout_thread = Thread.new()
-	var stdout_error := _stdout_thread.start(_read_stdout_loop)
-	if stdout_error != OK:
-		_stdout_thread = null
-		return stdout_error
-	_stdout_thread_started = true
+func _start_io_threads() -> Error:
+	_stdio_thread = Thread.new()
+	var stdio_error := _stdio_thread.start(_stdio_io_loop)
+	if stdio_error != OK:
+		_stdio_thread = null
+		return stdio_error
+	_stdio_thread_started = true
 
 	if _stderr != null:
 		_stderr_thread = Thread.new()
-		var stderr_error := _stderr_thread.start(_read_stderr_loop)
+		var stderr_error := _stderr_thread.start(_stderr_io_loop)
 		if stderr_error != OK:
-			_reader_stop = true
-			if _stdio != null:
-				_stdio.close()
-			_stdout_thread.wait_to_finish()
-			_stdout_thread_started = false
-			_stdout_thread = null
+			_io_stop = true
+			_stdio_thread.wait_to_finish()
+			_stdio_thread_started = false
+			_stdio_thread = null
 			_stderr_thread = null
 			return stderr_error
 		_stderr_thread_started = true
 	return OK
 
-func _wait_for_reader_threads() -> void:
-	if _stdout_thread != null and _stdout_thread_started:
-		_stdout_thread.wait_to_finish()
-	_stdout_thread_started = false
-	_stdout_thread = null
+func _wait_for_io_threads() -> void:
+	if _stdio_thread != null and _stdio_thread_started:
+		_stdio_thread.wait_to_finish()
+	_stdio_thread_started = false
+	_stdio_thread = null
 
 	if _stderr_thread != null and _stderr_thread_started:
 		_stderr_thread.wait_to_finish()
 	_stderr_thread_started = false
 	_stderr_thread = null
 
-func _read_stdout_loop() -> void:
-	_read_pipe_lines(_stdio, false)
-
-func _read_stderr_loop() -> void:
-	_read_pipe_lines(_stderr, true)
-
-func _read_pipe_lines(pipe: FileAccess, is_stderr: bool) -> void:
-	if pipe == null:
-		return
+func _stdio_io_loop() -> void:
 	var buffer := PackedByteArray()
-	while not _reader_stop and pipe.is_open():
-		var byte := pipe.get_8()
-		var read_error := pipe.get_error()
-		if read_error != OK:
-			break
-		buffer.append(byte)
-		if byte == 10:
-			_enqueue_line(buffer.get_string_from_utf8().strip_edges(), is_stderr)
-			buffer.clear()
-	if not buffer.is_empty():
-		_enqueue_line(buffer.get_string_from_utf8().strip_edges(), is_stderr)
+	while not _io_stop and _stdio != null and _stdio.is_open():
+		var did_work := _flush_outgoing_on_io_thread()
+		var pipe_ended := false
 
-func _enqueue_line(line: String, is_stderr: bool) -> void:
+		for _byte_index in range(4096):
+			var byte := _stdio.get_8()
+			var read_error := _stdio.get_error()
+			if read_error == OK:
+				did_work = true
+				buffer.append(byte)
+				if byte == 10:
+					_enqueue_stdout_line(buffer.get_string_from_utf8().strip_edges())
+					buffer.clear()
+				continue
+			if read_error == ERR_BUSY:
+				break
+			if read_error != ERR_FILE_EOF:
+				_enqueue_protocol_error("Codex stdout pipe read failed (error %s)." % read_error, "")
+			pipe_ended = true
+			break
+
+		if pipe_ended:
+			break
+		if not did_work:
+			OS.delay_usec(1000)
+
+	if not buffer.is_empty():
+		_enqueue_stdout_line(buffer.get_string_from_utf8().strip_edges())
+
+func _stderr_io_loop() -> void:
+	var buffer := PackedByteArray()
+	while not _io_stop and _stderr != null and _stderr.is_open():
+		var did_work := false
+		var pipe_ended := false
+
+		for _byte_index in range(4096):
+			var byte := _stderr.get_8()
+			var read_error := _stderr.get_error()
+			if read_error == OK:
+				did_work = true
+				buffer.append(byte)
+				if byte == 10:
+					_enqueue_stderr_line(buffer.get_string_from_utf8().strip_edges())
+					buffer.clear()
+				continue
+			if read_error == ERR_BUSY:
+				break
+			if read_error != ERR_FILE_EOF:
+				_enqueue_protocol_error("Codex stderr pipe read failed (error %s)." % read_error, "")
+			pipe_ended = true
+			break
+
+		if pipe_ended:
+			break
+		if not did_work:
+			OS.delay_usec(1000)
+
+	if not buffer.is_empty():
+		_enqueue_stderr_line(buffer.get_string_from_utf8().strip_edges())
+
+func _flush_outgoing_on_io_thread() -> bool:
+	var batch := _take_outgoing_lines()
+	if batch.is_empty():
+		return false
+
+	for index in range(batch.size()):
+		var line := batch[index]
+		var stored := _stdio.store_line(line)
+		_stdio.flush()
+		var write_error := _stdio.get_error()
+		if stored and (write_error == OK or write_error == ERR_BUSY):
+			continue
+		if write_error == ERR_BUSY:
+			_requeue_outgoing_front(batch, index)
+			return index > 0
+		_enqueue_protocol_error("Codex stdin pipe write failed (error %s)." % write_error, line)
+		return index > 0
+	return true
+
+func _take_outgoing_lines() -> Array[String]:
+	var batch: Array[String] = []
+	_queue_mutex.lock()
+	batch.assign(_outgoing_lines)
+	_outgoing_lines.clear()
+	_queue_mutex.unlock()
+	return batch
+
+func _requeue_outgoing_front(lines: Array[String], start_index: int) -> void:
+	_queue_mutex.lock()
+	for index in range(lines.size() - 1, start_index - 1, -1):
+		_outgoing_lines.push_front(lines[index])
+	_queue_mutex.unlock()
+
+func _enqueue_stdout_line(line: String) -> void:
 	if line.is_empty():
 		return
 	_queue_mutex.lock()
-	if is_stderr:
-		_stderr_lines.append(line)
-	else:
-		_stdout_lines.append(line)
+	_stdout_lines.append(line)
 	_queue_mutex.unlock()
 
-func _drain_line_queues() -> void:
+func _enqueue_stderr_line(line: String) -> void:
+	if line.is_empty():
+		return
+	_queue_mutex.lock()
+	_stderr_lines.append(line)
+	_queue_mutex.unlock()
+
+func _enqueue_protocol_error(message: String, raw_line: String) -> void:
+	_queue_mutex.lock()
+	_protocol_errors.append({
+		"message": message,
+		"raw_line": raw_line,
+	})
+	_queue_mutex.unlock()
+
+func _drain_queues() -> void:
 	var stdout_batch: Array[String] = []
 	var stderr_batch: Array[String] = []
+	var error_batch: Array[Dictionary] = []
 	_queue_mutex.lock()
 	stdout_batch.assign(_stdout_lines)
 	stderr_batch.assign(_stderr_lines)
+	error_batch.assign(_protocol_errors)
 	_stdout_lines.clear()
 	_stderr_lines.clear()
+	_protocol_errors.clear()
 	_queue_mutex.unlock()
 
 	for line in stdout_batch:
 		_parse_message(line)
 	for line in stderr_batch:
 		stderr_received.emit(line)
+	for error_value in error_batch:
+		protocol_error.emit(
+			str(error_value.get("message", "Pipe error")),
+			str(error_value.get("raw_line", ""))
+		)
 
-func _clear_line_queues() -> void:
+func _clear_queues() -> void:
 	_queue_mutex.lock()
+	_outgoing_lines.clear()
 	_stdout_lines.clear()
 	_stderr_lines.clear()
+	_protocol_errors.clear()
 	_queue_mutex.unlock()
 
 func _write_message(message: Dictionary) -> void:
-	if _stdio == null:
-		return
 	var serialized := JSON.stringify(message)
-	var stored := _stdio.store_line(serialized)
-	_stdio.flush()
-	var write_error := _stdio.get_error()
-	if not stored or (write_error != OK and write_error != ERR_BUSY):
-		protocol_error.emit("Failed to write to Codex app-server pipe (error %s)." % write_error, serialized)
+	_queue_mutex.lock()
+	_outgoing_lines.append(serialized)
+	_queue_mutex.unlock()
 
 func _parse_message(line: String) -> void:
 	var parsed := JSON.parse_string(line)
