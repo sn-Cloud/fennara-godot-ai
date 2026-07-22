@@ -31,11 +31,18 @@ The addon does not contain an AI model and does not read or store ChatGPT OAuth 
 
 ## Installation
 
-1. Copy `addons/codex_native_chat/` into the Godot project.
-2. Install Godot MCP Native into `addons/godot_mcp/` and enable it.
-3. Open **Project > Project Settings > Plugins**.
-4. Enable **Codex Native Chat**.
-5. Open the **CodexNativeChatDock** dock.
+### Install from the validated ZIP
+
+1. Download `codex-native-chat-addon-1.0.0.zip` from the latest successful **Codex Native Chat CI** artifact.
+2. Extract the ZIP into the Godot project root. It contains `addons/codex_native_chat/`.
+3. Install Godot MCP Native into `addons/godot_mcp/` and enable it.
+4. Open **Project > Project Settings > Plugins**.
+5. Enable **Codex Native Chat**.
+6. Open the **CodexNativeChatDock** dock.
+
+### Install from source
+
+Copy `addons/codex_native_chat/` into the Godot project, then enable the plugin from **Project > Project Settings > Plugins**.
 
 The addon attempts to find Codex automatically. When auto-detection fails, open **Settings** and set the full path to `codex.exe`, `codex.cmd`, or the Unix `codex` executable.
 
@@ -98,6 +105,24 @@ bearer_token_env_var = "GODOT_MCP_TOKEN"
 - Configures and reloads Godot MCP Native.
 - Exposes model, sandbox, approval policy, endpoint, executable, and auto-connect settings.
 
+## Automated validation
+
+The CI workflow validates the addon on Godot 4.6.3 for both Windows and Linux. It covers:
+
+- editor plugin loading and GDScript parsing
+- bidirectional JSON-RPC over redirected stdio
+- native executable and Windows `codex.cmd` launch paths
+- official `@openai/codex` app-server handshake
+- `account/read`, MCP configuration reload, and MCP status queries
+- thread creation and resume
+- turn start, streaming, diff rendering, interruption, and completion
+- command and file-change approvals
+- permission approvals, user-input requests, and MCP elicitation
+- login/logout state, settings persistence, and request-context cleanup
+- non-destructive project `.codex/config.toml` updates
+
+The installable archive is generated only after all Windows and Linux jobs pass. Its SHA-256 file is included with the artifact.
+
 ## Default safety settings
 
 ```text
@@ -127,4 +152,4 @@ Inspect the current scene, implement the missing player damage feedback, run the
 - The addon depends on the installed Codex app-server protocol version. It uses the stable v2 thread/turn API and opts into experimental requests required for user-input and permission workflows.
 - Windows npm installations may expose `codex.cmd`; the addon supports it through `cmd.exe`, but a native `codex.exe` is preferred for the cleanest stdio behavior.
 - The dock provides practical rich-text streaming, not the full rendering system used by the official Codex applications.
-- Real ChatGPT OAuth, proxy behavior, and Godot MCP Native runtime behavior must be validated on the user's machine because CI cannot access the user's account or editor session.
+- Real ChatGPT browser OAuth, the user's proxy configuration, and a live Godot MCP Native session against the user's own project still require one local acceptance test.
