@@ -33,17 +33,29 @@ jobs:
         env:
           CI: "true"
         run: |
+          set -o pipefail
           ./Godot_v4.6.3-stable_linux.x86_64 \
             --headless \
             --path tests/codex_native_chat \
             --editor \
-            --quit-after 5
+            --quit-after 5 2>&1 | tee editor-load.log
 
       - name: Run GDScript smoke tests
         env:
           CI: "true"
         run: |
+          set -o pipefail
           ./Godot_v4.6.3-stable_linux.x86_64 \
             --headless \
             --path tests/codex_native_chat \
-            --script res://smoke_test.gd
+            --script res://smoke_test.gd 2>&1 | tee smoke-test.log
+
+      - name: Upload Godot logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-native-chat-godot-logs
+          path: |
+            editor-load.log
+            smoke-test.log
+          if-no-files-found: ignore
