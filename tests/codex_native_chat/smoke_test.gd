@@ -93,14 +93,17 @@ func _test_app_server_transport() -> bool:
 			break
 		await create_timer(0.01).timeout
 
+	var queued_lines: int = _mock_client._outgoing_lines.size()
+	var pipe_error: int = _mock_client._stdio.get_error() if _mock_client._stdio != null else -1
 	var was_running: bool = _mock_client.is_running()
+	print("Transport deadline state: queued=%s pipe_error=%s running=%s" % [queued_lines, pipe_error, was_running])
 	_mock_client.shutdown("test_complete")
 	if not _mock_error.is_empty():
 		return _fail(_mock_error)
 	if not _mock_started_seen:
 		return _fail("Mock process emitted no startup notification. running=%s status=%s stopped=%s" % [was_running, _mock_status, _mock_stopped_reason])
 	if not _mock_response_seen:
-		return _fail("No initialize response was received from the mock app-server. running=%s status=%s stopped=%s" % [was_running, _mock_status, _mock_stopped_reason])
+		return _fail("No initialize response was received from the mock app-server. queued=%s pipe_error=%s running=%s status=%s stopped=%s" % [queued_lines, pipe_error, was_running, _mock_status, _mock_stopped_reason])
 	if not _mock_notification_seen:
 		return _fail("No notification was received from the mock app-server.")
 	if not _mock_server_request_seen:
@@ -131,8 +134,8 @@ func _on_mock_server_request_received(request_id: Variant, method: String, _para
 	_mock_client.respond(request_id, {"decision": "accept"})
 
 func _on_mock_protocol_error(message: String, raw_line: String) -> void:
-	if message.contains("stderr pipe read failed (error 14)"):
-		print("Ignoring transient nonblocking stderr read status: %s" % message)
+	if message.contains("pipe read failed (error 14)"):
+		print("Ignoring transient nonblocking pipe read status: %s" % message)
 		return
 	_mock_error = "Protocol error: %s %s" % [message, raw_line]
 
