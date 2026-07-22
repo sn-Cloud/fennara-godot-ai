@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 from pathlib import Path
+import shutil
 import sys
 
 if len(sys.argv) != 2:
@@ -19,3 +20,10 @@ for path in paths:
     if updated == text and "is_backend_connected()" not in text:
         raise RuntimeError(f"expected backend connection method not found: {path}")
     path.write_text(updated, encoding="utf-8")
+
+# GitHub Actions 的 GITHUB_TOKEN 不能通过 git push 创建或更新工作流文件。
+# 测试仍使用源码包中的工作流定义，但发布提交先移除它们；
+# 通过验证后，再由 GitHub Contents API 添加最终的仅手动运行工作流。
+workflows_dir = root / ".github" / "workflows"
+if workflows_dir.exists():
+    shutil.rmtree(workflows_dir)
