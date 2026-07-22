@@ -1,0 +1,45 @@
+name: 仓库检查
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  repository-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 检查必需文件
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            README.md LICENSE.md NOTICE.md AGENTS.md CONTEXT.md CONTRIBUTING.md SECURITY.md llms.txt
+            docs/repo-map.md docs/architecture.md docs/manual-install.md docs/release.md
+            addons/godot_ai_manager/plugin.cfg
+            addons/godot_ai_manager/godot_ai_manager.gd
+            addons/godot_ai_manager/godot_ai_manager_dock.gd
+            addons/godot_ai_manager/codex_backend.gd
+            addons/godot_ai_manager/kimi_backend.gd
+          )
+          for path in "${required[@]}"; do
+            test -f "$path" || { echo "缺少文件：$path"; exit 1; }
+          done
+      - name: 确认没有 Fennara MCP 运行时
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -e addons/fennara
+          test ! -e local
+          if grep -RInE '127\.0\.0\.1:41287|/tools/call|fennara-mcp|mcp_servers\.fennara' addons tests --exclude=codex_config_manager.gd; then
+            echo "发现残留的 Fennara MCP/runtime 引用"
+            exit 1
+          fi
+      - name: 确认唯一 Godot MCP 名称
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -RIn 'godot-mcp' addons/godot_ai_manager >/dev/null
+          test "$(find addons -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 1
