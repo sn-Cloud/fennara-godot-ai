@@ -2,14 +2,6 @@ name: Codex Native Chat CI
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - agent/godot-codex-native-chat
-  pull_request:
-    paths:
-      - "addons/codex_native_chat/**"
-      - "tests/codex_native_chat/**"
-      - ".github/workflows/codex-native-chat-ci.yml"
 
 jobs:
   linux-smoke-test:
