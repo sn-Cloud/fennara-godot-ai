@@ -1,194 +1,225 @@
-# Fennara Godot AI
+# Godot Codex 内置对话
 
-[![Discord](https://img.shields.io/badge/Discord-加入%20Fennara-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/3fF4ft9PTk)
-[![演示](https://img.shields.io/badge/演示-查看全部-red?logo=youtube&logoColor=white)](docs/demos.md)
-[![许可证](https://img.shields.io/badge/许可证-MIT-blue.svg)](LICENSE.md)
+在 Godot 编辑器内部直接使用官方 Codex 的开发插件。
 
-Fennara 已被多家 Godot 开发团队使用，其中包括 [Somni Game Studios](https://somnigamestudios.com/)。
+本插件会在后台启动官方 `codex app-server`，复用用户现有的 Codex／ChatGPT 登录状态，并在 Godot 中提供聊天、流式输出、工具调用、审批、Diff、日志和会话管理界面。
 
-Fennara 为 AI 助手提供与 Godot 编辑器的实时连接。它既可供 Codex、Claude、Cursor、Gemini、Antigravity 等支持 MCP 的应用使用，也可通过可选的 Godot 编辑器内置聊天面板直接使用。
+## 核心外部依赖：Godot MCP Native
 
-Agent 可以检查场景、分析脚本、截取画面、读取运行时错误，并在编辑器中验证修改结果，而不是只根据项目文件进行推测。
+> **Godot MCP Native 是一个完全独立的第三方开源仓库，不属于本项目，也不会随本插件一起安装。**
+>
+> 官方仓库：<https://github.com/yurineko73/Godot-MCP-Native>
 
-## Codex 内置对话插件
+Godot MCP Native 是本项目实现“让 Codex 直接控制 Godot 编辑器”的关键组件。它在 Godot 内部运行原生 MCP Server，并向 Codex 提供场景、节点、脚本、资源、调试器、Profiler、运行时对象、动画、材质、音频、输入和截图等 Godot 专用工具。
 
-当前分支还包含一个独立的 Godot 内置对话面板，底层使用官方 `codex app-server`。它复用 Codex／ChatGPT 登录状态，并自动配置 Codex 连接位于 `http://127.0.0.1:9080/mcp` 的 Godot MCP Native。
+没有安装 Godot MCP Native 时，Codex 仍可使用自身的文件、Shell 和 Git 工具修改项目文件，但无法可靠读取和操作 Godot 编辑器内部状态。
 
-安装方法、架构、权限和验证说明请参阅 [Godot Codex 内置对话](addons/codex_native_chat/README.md)。
+### Godot MCP Native 官方信息
 
-<table>
-  <tr>
-    <td width="46%">
-      <a href="https://www.youtube.com/watch?v=2vSYP7GyA5U">
-        <img src="https://i.ytimg.com/vi/2vSYP7GyA5U/hqdefault.jpg" alt="Fennara 与其他 Godot MCP 的对比" width="100%" />
-      </a>
-    </td>
-    <td>
-      <strong>查看精选演示</strong><br />
-      Fennara 与其他 Godot MCP 的对比。<br />
-      <a href="https://www.youtube.com/watch?v=2vSYP7GyA5U">播放视频</a><br />
-      <a href="docs/demos.md">浏览全部演示视频</a>
-    </td>
-  </tr>
-</table>
+- 官方仓库：<https://github.com/yurineko73/Godot-MCP-Native>
+- 插件目录：`addons/godot_mcp/`
+- 默认 MCP 地址：`http://127.0.0.1:9080/mcp`
+- 实现方式：Godot 原生实现，不需要额外运行 Node.js MCP Server
+- 许可证：MIT
+- 安装方式：Godot Asset Library 或从官方仓库手动安装
 
-## 功能说明
+Godot MCP Native 由其原作者独立开发和维护。本项目不会复制、打包、固定版本或自动更新它。两个插件需要分别安装、分别启用和分别更新。
 
-- 通过 MCP 向外部 AI 应用提供理解 Godot 的工具。
-- 在 Godot 编辑器内部提供可选的本地聊天面板。
-- 返回真实的 Godot 反馈，包括场景树、诊断信息、截图、运行时日志和验证结果。
-- 让 Agent 以当前已打开的编辑器为依据，而不是只依赖文件系统。
+## 组件职责
 
-外部 MCP 应用和内置聊天使用各自独立的模型配置。参阅 [MCP 应用与内置聊天](docs/chat-vs-mcp.md) 和 [内置聊天模型提供方](docs/providers.md)。
+| 组件 | 主要职责 |
+| --- | --- |
+| **Godot Codex 内置对话** | Godot 内部聊天界面、Codex 进程管理、流式显示、审批、Diff、日志、会话和 MCP 自动配置。 |
+| **官方 Codex CLI / app-server** | ChatGPT 登录、模型推理、会话存储、文件、Shell、Git 和 MCP 客户端。 |
+| **Godot MCP Native** | 在 Godot 编辑器内部提供 MCP Server 和 Godot 专用操作工具。 |
+
+## 系统架构
+
+```text
+Godot 编辑器
+└── Codex 内置对话 Dock
+        |
+        | JSON-RPC / JSONL over stdio
+        v
+    codex app-server
+        |
+        | 标准 MCP 客户端
+        v
+    Godot MCP Native（独立仓库，需单独安装）
+    http://127.0.0.1:9080/mcp
+        |
+        v
+    当前 Godot 编辑器和正在运行的项目
+```
 
 ## 环境要求
 
-- Godot 4.5 或更高版本。
-- 支持的桌面系统：Windows x86_64、Linux x86_64 或 macOS arm64。
-- 只有在需要通过 Claude、Codex、Cursor、Gemini、Antigravity 或其他外部 AI 应用使用 Fennara 时，才需要支持 MCP 的编程应用。
-- 只有在需要使用 Fennara 内置聊天面板时，才需要配置聊天模型提供方。可以使用云端模型密钥，也可以使用 Ollama／LM Studio 等本地模型服务。
+- Godot 4.6 或更高版本；
+- 本机已安装官方 Codex CLI；
+- ChatGPT 套餐包含 Codex 使用权限，或使用其他 Codex 支持的模型提供方；
+- 已从独立仓库安装并启用 Godot MCP Native。
 
-完整安装流程请参阅 [安装与配置](docs/setup.md)。
+## 安装顺序
 
-## 安装后包含的组件
+### 第一步：安装 Godot MCP Native
 
-- 位于 `res://addons/fennara/` 的 Fennara 插件。
-- 安装在 Fennara 应用数据目录中的轻量 `fennara` CLI。
-- 供 AI 编程应用使用的本地 MCP Server。
-- 在 MCP／聊天请求与当前 Godot 编辑器之间进行桥接的本地守护进程。
-- 为 AI Agent 自动生成的项目指导文件。
+官方仓库：<https://github.com/yurineko73/Godot-MCP-Native>
 
-内置聊天面板使用平台 WebView：Windows 使用 Microsoft Edge WebView2，macOS 使用 WKWebView／WebKit，Linux 使用由 Fennara 管理的共享 CEF 运行时。即使可选聊天面板无法启动，MCP 工具仍可正常工作。
+#### 通过 Godot Asset Library 安装
 
-## 安装
+1. 在 Godot 中打开 **AssetLib**；
+2. 搜索 **Godot MCP Native**；
+3. 下载并安装；
+4. 打开 **项目 > 项目设置 > 插件**；
+5. 启用 **Godot MCP Native**。
 
-在 Windows 和 Linux 上，可以选择插件安装或 CLI 安装。macOS 建议使用下面的 CLI 安装方式，以避免手动下载和解压插件 ZIP 后可能出现的系统安全提示。
+#### 从官方仓库手动安装
 
-### 将插件添加到项目
+1. 下载或克隆 Godot MCP Native 官方仓库；
+2. 将其中的 `addons/godot_mcp/` 复制到当前项目的 `addons/` 目录；
+3. 在 **项目 > 项目设置 > 插件** 中启用 **Godot MCP Native**。
 
-- 打开 [最新版本](https://github.com/fennaraOfficial/fennara-godot-ai/releases/latest)，下载 `fennara-addon-latest.zip`，将其中的 `addons/fennara/` 解压到项目中。
+### 第二步：安装 Codex 内置对话
 
-打开项目，选择 Fennara 面板，然后点击 **Set Up Fennara**。
+1. 将本仓库中的 `addons/codex_native_chat/` 复制到 Godot 项目的 `addons/` 目录；
+2. 打开 **项目 > 项目设置 > 插件**；
+3. 启用 **Codex 内置对话**；
+4. 打开 **CodexNativeChatDock** 面板。
 
-> **macOS：** 当前版本插件中包含尚未经过 Apple 公证的原生库。通过浏览器下载并手动解压插件 ZIP 时，macOS 可能提示无法验证 `libfennara.macos.editor` 是否安全。为避免该提示，请使用下面的 CLI 安装方式。已经出现提示时，关闭 Godot，删除手动复制的 `addons/fennara/`，然后通过 CLI 安装。
+安装后项目目录应至少包含：
 
-### 使用 CLI 安装（macOS 推荐）
-
-CLI 安装的是同一个 Fennara 插件。macOS 推荐使用这种方式，因为它可以绕过浏览器和 Finder 的隔离属性，避免上述安全提示。
-
-Windows 安装命令：
-
-```powershell
-irm https://raw.githubusercontent.com/fennaraOfficial/fennara-godot-ai/main/install.ps1 | iex
+```text
+addons/
+├── codex_native_chat/
+└── godot_mcp/
 ```
 
-macOS 和 Linux 安装命令：
+## Godot MCP Native 自动配置
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/fennaraOfficial/fennara-godot-ai/main/install.sh | sh
+本插件默认将 Codex 连接到：
+
+```text
+http://127.0.0.1:9080/mcp
 ```
 
-然后进入 Godot 项目目录运行：
+插件会在项目中创建或更新：
 
-```bash
-cd path/to/your-godot-project
-fennara install
+```text
+<Godot 项目目录>/.codex/config.toml
 ```
 
-故障排查请参阅 [安装与配置](docs/setup.md)，完整命令说明请参阅 [Fennara CLI](docs/cli.md)。
+写入以下配置，同时保留其他 Codex 配置：
 
-## 配置模型提供方或连接 MCP 应用
-
-### 内置聊天
-
-打开 **Chat Settings > Chat**，选择 **Open providers**，然后连接模型提供方。
-
-Fennara 对云端模型采用用户自备密钥模式，也支持本地 Ollama 或 LM Studio 服务。参阅 [支持的模型提供方](docs/providers.md)。
-
-### MCP 应用
-
-打开 **Chat Settings > MCP Apps**，找到需要使用的应用并点击 **Set Up**。
-
-也可以在终端中连接：
-
-```bash
-fennara mcp-setup --codex
-fennara mcp-setup --help
+```toml
+[mcp_servers.godot-mcp]
+url = "http://127.0.0.1:9080/mcp"
+enabled = true
+startup_timeout_sec = 20
 ```
 
-Chat Settings 中未列出目标 MCP 应用时，请参阅 [MCP 配置](docs/mcp-setup.md)，其中包含完整应用列表和手动配置说明。
+配置变化后，插件会调用：
 
-## 更新
-
-Fennara 面板显示 **Update** 时，点击并按照提示操作。
-
-> **从 Fennara v0.3.8 或更早版本升级：** 请先使用对应平台的安装命令重新安装一次 CLI，然后再运行 `fennara update`。旧版 CLI 使用的发布标签已经停用，无法发现当前版本。重新安装 CLI 只会切换后续更新来源，不会删除现有项目插件或配置。
-
-> **macOS 用户从 Fennara v0.3.11 升级：** 更新前请先使用 macOS 安装命令重新安装一次 CLI。v0.3.11 CLI 会在自更新前拒绝现有的 macOS framework bundle。重新安装只会替换 CLI，不会删除现有项目插件或配置。
-
-通过终端更新时，先关闭 Godot，然后运行：
-
-```bash
-cd path/to/your-godot-project
-fennara update
+```text
+config/mcpServer/reload
+mcpServerStatus/list
 ```
 
-恢复和诊断方法请参阅 [更新 Fennara](docs/setup.md#update-fennara)。
+用于重新加载 MCP 配置并查询 Godot MCP Native 状态。
 
-## 工具能力
+需要注意：**自动配置不等于自动安装。** 本插件无法替代 Godot MCP Native，也无法在它未安装或未启用时提供 Godot 编辑器控制能力。
 
-Fennara 提供少量面向 Godot 的专用工具：
+## 主要功能
 
-- 写入或更新项目文件并返回诊断结果。
-- 执行一次性的场景编辑脚本。
-- 检查场景树、节点、资源和 Godot 类。
-- 验证场景。
-- 截取画面。
-- 启动运行时会话并读取运行日志。
-- 对正在运行的场景执行小型运行时脚本。
+- 在 Godot 内部启动和关闭官方 `codex app-server`；
+- 使用 ChatGPT／Codex 会员登录状态；
+- 新建和恢复 Codex 会话；
+- 流式显示 Agent 回答；
+- 中断当前任务；
+- 显示命令、文件修改、MCP 工具和网页搜索活动；
+- 显示汇总 Diff 和运行日志；
+- 处理命令执行、文件修改和额外权限审批；
+- 处理 Codex `request_user_input` 和 MCP elicitation；
+- 自动维护 Godot MCP Native 的 Codex 配置；
+- 查询并显示 Godot MCP Native 连接状态；
+- 配置模型、沙箱、审批策略、MCP 地址和 Codex 可执行文件。
 
-Fennara 的目标不是替代 Agent 自带的文件工具，而是补充缺失的 Godot 反馈闭环。
+## ChatGPT 登录
 
-## 演示
+点击插件中的 **登录** 后，插件会请求官方 Codex 启动浏览器登录流程：
 
-观看 Fennara 实际操作演示：
+```text
+account/login/start { type = "chatgpt" }
+```
 
-[![该 Godot 插件全面改变 AI 游戏开发](https://i.ytimg.com/vi/pijlHyiOnz4/hqdefault.jpg)](https://www.youtube.com/watch?v=pijlHyiOnz4&t=22s)
+OAuth 凭据由官方 Codex 保存和刷新。本插件不会读取或保存 ChatGPT OAuth Token。
 
-更多视频：
+## 安全设置
 
-- [我给 Codex 一张游戏概念图，它在 Godot 中完成了这个项目](https://www.youtube.com/watch?v=ztbH6zBhxMc)
-- [Fennara MCP 在 Godot 中制作 Katamari 风格游戏](https://www.youtube.com/watch?v=8y2Ub8pgNSs)
-- [这个 Godot 插件改变了 AI 游戏开发方式](https://www.youtube.com/watch?v=wKln8248y2M)
+默认配置：
 
-更多内容请参阅 Fennara 频道的 [演示列表](docs/demos.md)。
+```text
+沙箱：workspace-write
+审批策略：on-request
+```
 
-## Star 历史
+该配置允许 Codex 修改当前项目，但在请求更高权限操作时需要用户确认。
 
-<a href="https://www.star-history.com/?repos=fennaraOfficial%2Ffennara-godot-ai&type=date&legend=top-left">
- <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&theme=dark&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
-   <img alt="Star 历史图表" src="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
- </picture>
-</a>
+设置中也可选择 `read-only`、`danger-full-access`、`untrusted` 和 `never` 等模式。无限制模式会授予 Codex 相应的本机权限，只应在可信项目和仓库中使用。
 
-## 文档
+Godot MCP Native 启用 Bearer Token 时，建议通过环境变量传递，不要把令牌提交到项目仓库：
 
-| 建议入口 | 适用场景 |
-| --- | --- |
-| [文档首页](docs/README.md) | 查看全部指南和参考资料 |
-| [安装与配置](docs/setup.md) | 安装、更新和故障排查 |
-| [聊天模型提供方](docs/providers.md) | 内置聊天模型和密钥配置 |
-| [MCP 配置](docs/mcp-setup.md) | Codex、Claude、Cursor 和其他 MCP 应用 |
-| [工具说明](docs/tools.md) | Agent 可获得的 Godot 反馈能力 |
-| [参与贡献](CONTRIBUTING.md) | 开发和 Pull Request 指南 |
+```toml
+[mcp_servers.godot-mcp]
+url = "http://127.0.0.1:9080/mcp"
+bearer_token_env_var = "GODOT_MCP_TOKEN"
+```
 
-## 社区
+## 自动化验证
 
-欢迎在 Discord 中咨询安装问题、交流使用经验或提供早期反馈：
+项目使用 Godot 4.6.3 在 Windows 和 Linux 上验证：
 
-https://discord.com/invite/3fF4ft9PTk
+- Godot 编辑器插件加载和 GDScript 解析；
+- 双向 JSON-RPC／JSONL stdio 通信；
+- Windows `codex.exe`、`codex.cmd` 和 `cmd.exe` 启动路径；
+- 官方 `@openai/codex` app-server 握手；
+- 账户状态读取；
+- MCP 配置重载和状态查询；
+- 会话创建、恢复、任务启动、中断和完成；
+- 流式消息、Diff 和日志；
+- 命令、文件、权限和用户输入审批；
+- MCP elicitation；
+- 请求上下文释放和设置持久化。
+
+云端测试无法代替真实的 ChatGPT OAuth、用户代理环境、Godot MCP Native 编辑器实例和实际项目，因此仍需进行本机最终验收。
+
+## 故障排查
+
+Godot MCP Native 状态显示未连接时，依次检查：
+
+1. `addons/godot_mcp/` 是否存在；
+2. Godot MCP Native 是否在插件管理中启用；
+3. Godot MCP Native 是否使用 HTTP 模式；
+4. 端口是否为 `9080`，或插件设置中的地址是否与实际一致；
+5. `9080` 端口是否被占用；
+6. 启用认证时，Codex 是否获得正确的 Bearer Token；
+7. 修改配置后是否重新连接 Codex。
+
+## 详细文档
+
+完整安装、架构、权限和兼容性说明：
+
+[addons/codex_native_chat/README.md](addons/codex_native_chat/README.md)
+
+Godot MCP Native 官方文档：
+
+<https://github.com/yurineko73/Godot-MCP-Native>
+
+## 当前限制
+
+- Godot MCP Native 是独立项目，其版本、工具和兼容性由原仓库维护；
+- 本插件依赖本机安装的 Codex app-server 协议版本；
+- Godot 内部 Dock 没有完整复制官方 Codex 客户端的全部渲染功能；
+- 真实 OAuth、代理和 Godot MCP Native 工具调用仍需在用户电脑上验证。
 
 ## 许可证
 
