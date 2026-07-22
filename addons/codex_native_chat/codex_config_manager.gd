@@ -9,23 +9,13 @@ func ensure_project_mcp_config(project_root: String, endpoint: String) -> Dictio
 	var config_path := codex_dir.path_join("config.toml")
 	var make_error := DirAccess.make_dir_recursive_absolute(codex_dir)
 	if make_error != OK and make_error != ERR_ALREADY_EXISTS:
-		return {
-			"success": false,
-			"changed": false,
-			"path": config_path,
-			"error": "Could not create %s (error %s)." % [codex_dir, make_error],
-		}
+		return _result(false, false, config_path, "Could not create %s (error %s)." % [codex_dir, make_error])
 
 	var original := ""
 	if FileAccess.file_exists(config_path):
 		var read_file := FileAccess.open(config_path, FileAccess.READ)
 		if read_file == null:
-			return {
-				"success": false,
-				"changed": false,
-				"path": config_path,
-				"error": "Could not read %s." % config_path,
-			}
+			return _result(false, false, config_path, "Could not read %s." % config_path)
 		original = read_file.get_as_text()
 		read_file.close()
 
@@ -35,30 +25,14 @@ func ensure_project_mcp_config(project_root: String, endpoint: String) -> Dictio
 	]
 	var updated := _replace_table(original, MCP_SECTION, block)
 	if updated == original:
-		return {
-			"success": true,
-			"changed": false,
-			"path": config_path,
-			"error": "",
-		}
+		return _result(true, false, config_path, "")
 
 	var write_file := FileAccess.open(config_path, FileAccess.WRITE)
 	if write_file == null:
-		return {
-			"success": false,
-			"changed": false,
-			"path": config_path,
-			"error": "Could not write %s." % config_path,
-		}
+		return _result(false, false, config_path, "Could not write %s." % config_path)
 	write_file.store_string(updated)
 	write_file.close()
-
-	return {
-		"success": true,
-		"changed": true,
-		"path": config_path,
-		"error": "",
-	}
+	return _result(true, true, config_path, "")
 
 func _replace_table(source: String, section: String, replacement: String) -> String:
 	var lines := source.split("\n", true)
@@ -69,7 +43,6 @@ func _replace_table(source: String, section: String, replacement: String) -> Str
 	for raw_line in lines:
 		var line := str(raw_line)
 		var stripped := line.strip_edges()
-
 		if stripped == section:
 			if not replaced:
 				for replacement_line in replacement.split("\n"):
@@ -77,10 +50,8 @@ func _replace_table(source: String, section: String, replacement: String) -> Str
 			replaced = true
 			skipping = true
 			continue
-
 		if skipping and stripped.begins_with("[") and stripped.ends_with("]"):
 			skipping = false
-
 		if not skipping:
 			output.append(line)
 
@@ -96,3 +67,11 @@ func _replace_table(source: String, section: String, replacement: String) -> Str
 
 func _escape_toml(value: String) -> String:
 	return value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+func _result(success: bool, changed: bool, path: String, error: String) -> Dictionary:
+	return {
+		"success": success,
+		"changed": changed,
+		"path": path,
+		"error": error,
+	}
