@@ -9,9 +9,106 @@ def emit(message):
     sys.stdout.flush()
 
 
+def emit_approval_suite_file_change():
+    emit({
+        "id": "suite-file",
+        "method": "item/fileChange/requestApproval",
+        "params": {
+            "threadId": "suite-thread",
+            "turnId": "suite-turn",
+            "itemId": "suite-file-item",
+            "reason": "Update a Godot script",
+            "grantRoot": None,
+        },
+    })
+
+
+def emit_approval_suite_permissions():
+    emit({
+        "id": "suite-permissions",
+        "method": "item/permissions/requestApproval",
+        "params": {
+            "threadId": "suite-thread",
+            "turnId": "suite-turn",
+            "itemId": "suite-permissions-item",
+            "environmentId": None,
+            "startedAtMs": 1,
+            "cwd": "/tmp",
+            "reason": "Access an additional project folder",
+            "permissions": {
+                "network": None,
+                "fileSystem": None,
+            },
+        },
+    })
+
+
+def emit_approval_suite_user_input():
+    emit({
+        "id": "suite-user-input",
+        "method": "item/tool/requestUserInput",
+        "params": {
+            "threadId": "suite-thread",
+            "turnId": "suite-turn",
+            "itemId": "suite-user-input-item",
+            "questions": [
+                {
+                    "id": "color",
+                    "header": "Theme color",
+                    "question": "Which color should the Godot UI use?",
+                    "isOther": True,
+                    "isSecret": False,
+                    "options": [
+                        {"label": "Blue", "description": "Use a blue theme"},
+                        {"label": "Gray", "description": "Use a gray theme"},
+                    ],
+                }
+            ],
+            "autoResolutionMs": None,
+        },
+    })
+
+
+def emit_approval_suite_mcp_elicitation():
+    emit({
+        "id": "suite-mcp",
+        "method": "mcpServer/elicitation/request",
+        "params": {
+            "threadId": "suite-thread",
+            "turnId": "suite-turn",
+            "serverName": "godot-mcp",
+            "message": "Provide a test response for Godot MCP Native.",
+            "requestedSchema": {
+                "type": "object",
+                "properties": {
+                    "value": {"type": "string"},
+                },
+                "required": ["value"],
+            },
+        },
+    })
+
+
+def emit_approval_suite_rejected_command():
+    emit({
+        "id": "suite-command",
+        "method": "item/commandExecution/requestApproval",
+        "params": {
+            "threadId": "suite-thread",
+            "turnId": "suite-turn",
+            "itemId": "suite-command-item",
+            "command": "echo should-be-rejected",
+            "cwd": "/tmp",
+            "reason": "Test rejection handling",
+        },
+    })
+
+
 client_name = ""
 transport_approval_pending = False
 dock_approval_pending = False
+approval_suite_active = False
+approval_suite_errors = []
 
 emit({"method": "mock/started", "params": {"pid": os.getpid(), "argv": sys.argv}})
 
@@ -157,6 +254,12 @@ for raw_line in sys.stdin:
             },
         })
 
+    elif method == "mock/approvalSuite/start":
+        approval_suite_active = True
+        approval_suite_errors.clear()
+        emit({"id": request_id, "result": {}})
+        emit_approval_suite_file_change()
+
     elif request_id == "approval-1" and transport_approval_pending and "result" in message:
         transport_approval_pending = False
         emit({
@@ -219,5 +322,41 @@ for raw_line in sys.stdin:
                     "status": "completed",
                     "items": [],
                 },
+            },
+        })
+
+    elif request_id == "suite-file" and approval_suite_active and "result" in message:
+        if message.get("result", {}).get("decision") != "acceptForSession":
+            approval_suite_errors.append("file approval decision")
+        emit_approval_suite_permissions()
+
+    elif request_id == "suite-permissions" and approval_suite_active and "result" in message:
+        result = message.get("result", {})
+        if result.get("scope") != "turn" or "permissions" not in result:
+            approval_suite_errors.append("permission approval response")
+        emit_approval_suite_user_input()
+
+    elif request_id == "suite-user-input" and approval_suite_active and "result" in message:
+        answers = message.get("result", {}).get("answers", {})
+        selected = answers.get("color", {}).get("answers", [])
+        if selected != ["Blue"]:
+            approval_suite_errors.append("user input response")
+        emit_approval_suite_mcp_elicitation()
+
+    elif request_id == "suite-mcp" and approval_suite_active and "result" in message:
+        result = message.get("result", {})
+        if result.get("action") != "accept" or result.get("content") != {"value": "ok"}:
+            approval_suite_errors.append("MCP elicitation response")
+        emit_approval_suite_rejected_command()
+
+    elif request_id == "suite-command" and approval_suite_active and "result" in message:
+        if message.get("result", {}).get("decision") != "decline":
+            approval_suite_errors.append("command rejection response")
+        approval_suite_active = False
+        emit({
+            "method": "mock/approvalSuiteComplete",
+            "params": {
+                "ok": not approval_suite_errors,
+                "errors": approval_suite_errors,
             },
         })
