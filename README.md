@@ -1,213 +1,195 @@
 # Fennara Godot AI
 
-[![Discord](https://img.shields.io/badge/Discord-Join%20Fennara-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/3fF4ft9PTk)
-[![Demos](https://img.shields.io/badge/Demos-See%20all-red?logo=youtube&logoColor=white)](docs/demos.md)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![Discord](https://img.shields.io/badge/Discord-加入%20Fennara-5865F2?logo=discord&logoColor=white)](https://discord.com/invite/3fF4ft9PTk)
+[![演示](https://img.shields.io/badge/演示-查看全部-red?logo=youtube&logoColor=white)](docs/demos.md)
+[![许可证](https://img.shields.io/badge/许可证-MIT-blue.svg)](LICENSE.md)
 
-Used by Godot developers and teams, including [Somni Game Studios](https://somnigamestudios.com/).
+Fennara 已被多家 Godot 开发团队使用，其中包括 [Somni Game Studios](https://somnigamestudios.com/)。
 
-Fennara gives AI assistants a live connection to Godot. Use it from MCP-capable apps like Codex, Claude, Cursor, Gemini, and Antigravity, or from the optional in-editor chat dock.
+Fennara 为 AI 助手提供与 Godot 编辑器的实时连接。它既可供 Codex、Claude、Cursor、Gemini、Antigravity 等支持 MCP 的应用使用，也可通过可选的 Godot 编辑器内置聊天面板直接使用。
 
-Agents can inspect scenes, check scripts, capture screenshots, read runtime errors, and validate changes inside the editor instead of guessing from project files alone.
+Agent 可以检查场景、分析脚本、截取画面、读取运行时错误，并在编辑器中验证修改结果，而不是只根据项目文件进行推测。
 
-## Codex Native Chat Addon
+## Codex 内置对话插件
 
-This branch also contains an experimental standalone Godot dock backed by the official `codex app-server`. It uses Codex/ChatGPT authentication and automatically configures Codex to connect to Godot MCP Native at `http://127.0.0.1:9080/mcp`.
+当前分支还包含一个独立的 Godot 内置对话面板，底层使用官方 `codex app-server`。它复用 Codex／ChatGPT 登录状态，并自动配置 Codex 连接位于 `http://127.0.0.1:9080/mcp` 的 Godot MCP Native。
 
-See [Godot Codex Native Chat](addons/codex_native_chat/README.md) for installation, architecture, permissions, and validation details.
+安装方法、架构、权限和验证说明请参阅 [Godot Codex 内置对话](addons/codex_native_chat/README.md)。
 
 <table>
   <tr>
     <td width="46%">
       <a href="https://www.youtube.com/watch?v=2vSYP7GyA5U">
-        <img src="https://i.ytimg.com/vi/2vSYP7GyA5U/hqdefault.jpg" alt="Comparing Fennara with other Godot MCPs" width="100%" />
+        <img src="https://i.ytimg.com/vi/2vSYP7GyA5U/hqdefault.jpg" alt="Fennara 与其他 Godot MCP 的对比" width="100%" />
       </a>
     </td>
     <td>
-      <strong>Watch the featured demo</strong><br />
-      Comparing Fennara with other Godot MCPs.<br />
-      <a href="https://www.youtube.com/watch?v=2vSYP7GyA5U">Play this video</a><br />
-      <a href="docs/demos.md">Browse all demo videos</a>
+      <strong>查看精选演示</strong><br />
+      Fennara 与其他 Godot MCP 的对比。<br />
+      <a href="https://www.youtube.com/watch?v=2vSYP7GyA5U">播放视频</a><br />
+      <a href="docs/demos.md">浏览全部演示视频</a>
     </td>
   </tr>
 </table>
 
-## What It Does
+## 功能说明
 
-- exposes Godot-aware tools to external AI apps through MCP
-- adds an optional local chat dock inside the Godot editor
-- returns real Godot feedback: scene trees, diagnostics, screenshots, runtime logs, and validation results
-- keeps the agent accountable to the open editor instead of only the filesystem
+- 通过 MCP 向外部 AI 应用提供理解 Godot 的工具。
+- 在 Godot 编辑器内部提供可选的本地聊天面板。
+- 返回真实的 Godot 反馈，包括场景树、诊断信息、截图、运行时日志和验证结果。
+- 让 Agent 以当前已打开的编辑器为依据，而不是只依赖文件系统。
 
-External MCP apps and the built-in chat use separate model settings. See [MCP Apps And Built-In Chat](docs/chat-vs-mcp.md) and [Built-In Chat Providers](docs/providers.md).
+外部 MCP 应用和内置聊天使用各自独立的模型配置。参阅 [MCP 应用与内置聊天](docs/chat-vs-mcp.md) 和 [内置聊天模型提供方](docs/providers.md)。
 
-## Requirements
+## 环境要求
 
-- Godot 4.5 or newer.
-- A supported desktop OS: Windows x86_64, Linux x86_64, or macOS arm64.
-- An MCP-capable coding app only if you want to use Fennara from Claude, Codex, Cursor, Gemini, Antigravity, or another external AI app.
-- A chat provider only if you want to use the built-in Fennara chat dock. This can be a cloud provider key or a local provider such as Ollama / LM Studio.
+- Godot 4.5 或更高版本。
+- 支持的桌面系统：Windows x86_64、Linux x86_64 或 macOS arm64。
+- 只有在需要通过 Claude、Codex、Cursor、Gemini、Antigravity 或其他外部 AI 应用使用 Fennara 时，才需要支持 MCP 的编程应用。
+- 只有在需要使用 Fennara 内置聊天面板时，才需要配置聊天模型提供方。可以使用云端模型密钥，也可以使用 Ollama／LM Studio 等本地模型服务。
 
-For the full install walkthrough, see [Setup](docs/setup.md).
+完整安装流程请参阅 [安装与配置](docs/setup.md)。
 
-## What Setup Adds
+## 安装后包含的组件
 
-- the Fennara addon kept in `res://addons/fennara/`
-- a small `fennara` CLI installed in Fennara app data
-- a local MCP server used by AI coding apps
-- a local daemon that bridges MCP/chat requests to the open Godot editor
-- generated project guidance for AI agents
+- 位于 `res://addons/fennara/` 的 Fennara 插件。
+- 安装在 Fennara 应用数据目录中的轻量 `fennara` CLI。
+- 供 AI 编程应用使用的本地 MCP Server。
+- 在 MCP／聊天请求与当前 Godot 编辑器之间进行桥接的本地守护进程。
+- 为 AI Agent 自动生成的项目指导文件。
 
-The built-in chat dock uses the platform webview: Microsoft Edge WebView2 on Windows, WKWebView/WebKit on macOS, and a Fennara-managed shared CEF runtime on Linux. MCP tools still work if the optional chat dock cannot start.
+内置聊天面板使用平台 WebView：Windows 使用 Microsoft Edge WebView2，macOS 使用 WKWebView／WebKit，Linux 使用由 Fennara 管理的共享 CEF 运行时。即使可选聊天面板无法启动，MCP 工具仍可正常工作。
 
-## Install
+## 安装
 
-On Windows and Linux, choose either the addon or CLI install. On macOS, use the
-CLI install below if you want to avoid the macOS security notification that can
-appear after manually downloading and extracting the addon ZIP.
+在 Windows 和 Linux 上，可以选择插件安装或 CLI 安装。macOS 建议使用下面的 CLI 安装方式，以避免手动下载和解压插件 ZIP 后可能出现的系统安全提示。
 
-### Add The Addon To Your Project
+### 将插件添加到项目
 
-- Open the [Latest Release](https://github.com/fennaraOfficial/fennara-godot-ai/releases/latest), download `fennara-addon-latest.zip`, and extract its `addons/fennara/` folder into your project.
+- 打开 [最新版本](https://github.com/fennaraOfficial/fennara-godot-ai/releases/latest)，下载 `fennara-addon-latest.zip`，将其中的 `addons/fennara/` 解压到项目中。
 
-Open the project, select the Fennara dock, and press **Set Up Fennara**.
+打开项目，选择 Fennara 面板，然后点击 **Set Up Fennara**。
 
-> **macOS:** The release addon contains a native library that is not currently
-> Apple-notarized. If you download the addon ZIP through a browser and extract
-> it manually, macOS may report that it cannot verify
-> `libfennara.macos.editor` is free of malware. To avoid this notification, use
-> the CLI installation below. If you already see the notification, close Godot,
-> remove the manually copied `addons/fennara/` folder, then install Fennara with
-> the CLI.
+> **macOS：** 当前版本插件中包含尚未经过 Apple 公证的原生库。通过浏览器下载并手动解压插件 ZIP 时，macOS 可能提示无法验证 `libfennara.macos.editor` 是否安全。为避免该提示，请使用下面的 CLI 安装方式。已经出现提示时，关闭 Godot，删除手动复制的 `addons/fennara/`，然后通过 CLI 安装。
 
-### Install With The CLI (Recommended On macOS)
+### 使用 CLI 安装（macOS 推荐）
 
-The CLI installs the same Fennara addon. It is the recommended installation
-method on macOS because it avoids the browser and Finder quarantine path that
-causes the notification described above.
+CLI 安装的是同一个 Fennara 插件。macOS 推荐使用这种方式，因为它可以绕过浏览器和 Finder 的隔离属性，避免上述安全提示。
 
-Install the CLI on Windows:
+Windows 安装命令：
 
 ```powershell
 irm https://raw.githubusercontent.com/fennaraOfficial/fennara-godot-ai/main/install.ps1 | iex
 ```
 
-Or on macOS and Linux:
+macOS 和 Linux 安装命令：
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/fennaraOfficial/fennara-godot-ai/main/install.sh | sh
 ```
 
-Then run Fennara from your Godot project:
+然后进入 Godot 项目目录运行：
 
 ```bash
 cd path/to/your-godot-project
 fennara install
 ```
 
-See [Setup](docs/setup.md) for troubleshooting and [Fennara CLI](docs/cli.md)
-for the complete command reference.
+故障排查请参阅 [安装与配置](docs/setup.md)，完整命令说明请参阅 [Fennara CLI](docs/cli.md)。
 
-## Set Up A Provider Or Connect An MCP App
+## 配置模型提供方或连接 MCP 应用
 
-### Built-In Chat
+### 内置聊天
 
-Open **Chat Settings > Chat**, select **Open providers**, and connect a provider.
-Fennara uses your own key for cloud providers (BYOK). You can also use a local
-Ollama or LM Studio server. See the [supported provider list](docs/providers.md).
+打开 **Chat Settings > Chat**，选择 **Open providers**，然后连接模型提供方。
 
-### MCP Apps
+Fennara 对云端模型采用用户自备密钥模式，也支持本地 Ollama 或 LM Studio 服务。参阅 [支持的模型提供方](docs/providers.md)。
 
-Open **Chat Settings > MCP Apps**, find your app, and press **Set Up**.
+### MCP 应用
 
-You can also connect an app from the terminal:
+打开 **Chat Settings > MCP Apps**，找到需要使用的应用并点击 **Set Up**。
+
+也可以在终端中连接：
 
 ```bash
 fennara mcp-setup --codex
 fennara mcp-setup --help
 ```
 
-If your MCP app is not listed in Chat Settings, see [MCP Setup](docs/mcp-setup.md)
-for the complete app list and manual configuration instructions.
+Chat Settings 中未列出目标 MCP 应用时，请参阅 [MCP 配置](docs/mcp-setup.md)，其中包含完整应用列表和手动配置说明。
 
-## Update
+## 更新
 
-When the Fennara dock shows **Update**, press it and follow the prompts.
+Fennara 面板显示 **Update** 时，点击并按照提示操作。
 
-> **Upgrading from Fennara v0.3.8 or older:** Reinstall the CLI once with the
-> platform install command above before running `fennara update`. Those CLI
-> versions resolve a retired release tag and cannot discover current releases.
-> Reinstalling the CLI switches future updates to GitHub's Latest Release
-> endpoint and does not remove your existing project addon or settings.
+> **从 Fennara v0.3.8 或更早版本升级：** 请先使用对应平台的安装命令重新安装一次 CLI，然后再运行 `fennara update`。旧版 CLI 使用的发布标签已经停用，无法发现当前版本。重新安装 CLI 只会切换后续更新来源，不会删除现有项目插件或配置。
 
-> **macOS users upgrading from Fennara v0.3.11:** Reinstall the CLI once with
-> the macOS install command above before updating. The v0.3.11 CLI rejects the
-> existing macOS framework bundle before it can self-update. Reinstalling only
-> replaces the CLI; it does not remove your existing project addon or settings.
+> **macOS 用户从 Fennara v0.3.11 升级：** 更新前请先使用 macOS 安装命令重新安装一次 CLI。v0.3.11 CLI 会在自更新前拒绝现有的 macOS framework bundle。重新安装只会替换 CLI，不会删除现有项目插件或配置。
 
-To update from the terminal, close Godot and run:
+通过终端更新时，先关闭 Godot，然后运行：
 
 ```bash
 cd path/to/your-godot-project
 fennara update
 ```
 
-See [Update Fennara](docs/setup.md#update-fennara) for recovery and diagnostics.
+恢复和诊断方法请参阅 [更新 Fennara](docs/setup.md#update-fennara)。
 
-## Tools
+## 工具能力
 
-Fennara exposes a small set of Godot-aware tools:
+Fennara 提供少量面向 Godot 的专用工具：
 
-- write or update project files and return diagnostics
-- run one-off scene edit scripts
-- inspect scene trees, nodes, resources, and Godot classes
-- validate scenes
-- capture screenshots
-- start runtime sessions and read runtime logs
-- run small runtime scripts against a live scene
+- 写入或更新项目文件并返回诊断结果。
+- 执行一次性的场景编辑脚本。
+- 检查场景树、节点、资源和 Godot 类。
+- 验证场景。
+- 截取画面。
+- 启动运行时会话并读取运行日志。
+- 对正在运行的场景执行小型运行时脚本。
 
-The goal is not to replace an agent's normal file tools. Fennara gives the missing Godot feedback loop.
+Fennara 的目标不是替代 Agent 自带的文件工具，而是补充缺失的 Godot 反馈闭环。
 
-## Demos
+## 演示
 
-Watch a hands-on Fennara walkthrough:
+观看 Fennara 实际操作演示：
 
-[![This Godot Plugin Revolutionizes AI Game Development Forever](https://i.ytimg.com/vi/pijlHyiOnz4/hqdefault.jpg)](https://www.youtube.com/watch?v=pijlHyiOnz4&t=22s)
+[![该 Godot 插件全面改变 AI 游戏开发](https://i.ytimg.com/vi/pijlHyiOnz4/hqdefault.jpg)](https://www.youtube.com/watch?v=pijlHyiOnz4&t=22s)
 
-More videos:
+更多视频：
 
-- [I Gave Codex an AI Game Image and It Built This in Godot](https://www.youtube.com/watch?v=ztbH6zBhxMc)
-- [Fennara MCP Builds a Katamari-Style Godot Game](https://www.youtube.com/watch?v=8y2Ub8pgNSs)
-- [This Godot Plugin Transforms AI Game Development Forever](https://www.youtube.com/watch?v=wKln8248y2M)
+- [我给 Codex 一张游戏概念图，它在 Godot 中完成了这个项目](https://www.youtube.com/watch?v=ztbH6zBhxMc)
+- [Fennara MCP 在 Godot 中制作 Katamari 风格游戏](https://www.youtube.com/watch?v=8y2Ub8pgNSs)
+- [这个 Godot 插件改变了 AI 游戏开发方式](https://www.youtube.com/watch?v=wKln8248y2M)
 
-See [Demos](docs/demos.md) for more videos from the Fennara channel.
+更多内容请参阅 Fennara 频道的 [演示列表](docs/demos.md)。
 
-## Star History
+## Star 历史
+
 <a href="https://www.star-history.com/?repos=fennaraOfficial%2Ffennara-godot-ai&type=date&legend=top-left">
  <picture>
    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&theme=dark&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
-   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
+   <img alt="Star 历史图表" src="https://api.star-history.com/chart?repos=fennaraOfficial/fennara-godot-ai&type=date&legend=top-left&sealed_token=fezQNXcS0bAmXpZnoyG8FLlAkcnajD5wnBrugJG7WDJRaoSAqXHjV010Bm1XJN9cWChDHTsk1MaWr3jWkh8KF-Hqp1fxnJfmPlvjUc8vtS_kao5tXHGBGQyL5IHhgzDdaoMqjRdH5B8pdo2Z-Pm511AXJxdwOYbXFCqcKNkpgS6WgxVUNjOTrKc5_ZkO" />
  </picture>
 </a>
 
-## Documentation
+## 文档
 
-| Start with... | When you need... |
+| 建议入口 | 适用场景 |
 | --- | --- |
-| [Documentation home](docs/README.md) | Every guide and reference page |
-| [Setup](docs/setup.md) | Installation, updates, and troubleshooting |
-| [Chat providers](docs/providers.md) | Built-in chat models and keys |
-| [MCP setup](docs/mcp-setup.md) | Codex, Claude, Cursor, and other MCP apps |
-| [Tools](docs/tools.md) | The Godot feedback available to agents |
-| [Contributing](CONTRIBUTING.md) | Development and pull request guidance |
+| [文档首页](docs/README.md) | 查看全部指南和参考资料 |
+| [安装与配置](docs/setup.md) | 安装、更新和故障排查 |
+| [聊天模型提供方](docs/providers.md) | 内置聊天模型和密钥配置 |
+| [MCP 配置](docs/mcp-setup.md) | Codex、Claude、Cursor 和其他 MCP 应用 |
+| [工具说明](docs/tools.md) | Agent 可获得的 Godot 反馈能力 |
+| [参与贡献](CONTRIBUTING.md) | 开发和 Pull Request 指南 |
 
-## Community
+## 社区
 
-Questions, setup help, and early feedback are welcome on Discord:
+欢迎在 Discord 中咨询安装问题、交流使用经验或提供早期反馈：
 
 https://discord.com/invite/3fF4ft9PTk
 
-## License
+## 许可证
 
-See [LICENSE.md](LICENSE.md).
+参阅 [LICENSE.md](LICENSE.md)。
