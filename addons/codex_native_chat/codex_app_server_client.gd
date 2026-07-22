@@ -281,8 +281,8 @@ func _flush_outgoing_on_io_thread() -> bool:
 
 	for index in range(batch.size()):
 		var line := batch[index]
-		var stored := _stdio.store_line(line)
-		_stdio.flush()
+		var payload := (line + "\n").to_utf8_buffer()
+		var stored := _stdio.store_buffer(payload)
 		var write_error := _stdio.get_error()
 		if stored and (write_error == OK or write_error == ERR_BUSY):
 			continue
