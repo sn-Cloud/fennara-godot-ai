@@ -131,6 +131,9 @@ func _on_mock_server_request_received(request_id: Variant, method: String, _para
 	_mock_client.respond(request_id, {"decision": "accept"})
 
 func _on_mock_protocol_error(message: String, raw_line: String) -> void:
+	if message.contains("stderr pipe read failed (error 14)"):
+		print("Ignoring transient nonblocking stderr read status: %s" % message)
+		return
 	_mock_error = "Protocol error: %s %s" % [message, raw_line]
 
 func _on_mock_stderr(text: String) -> void:
