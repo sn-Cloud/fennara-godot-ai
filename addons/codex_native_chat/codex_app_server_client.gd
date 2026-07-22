@@ -228,7 +228,7 @@ func _stdio_io_loop() -> void:
 					_enqueue_stdout_line(buffer.get_string_from_utf8().strip_edges())
 					buffer.clear()
 				continue
-			if read_error == ERR_BUSY:
+			if read_error == ERR_BUSY or read_error == ERR_FILE_CANT_READ:
 				break
 			if read_error != ERR_FILE_EOF:
 				_enqueue_protocol_error("Codex stdout pipe read failed (error %s)." % read_error, "")
@@ -259,7 +259,7 @@ func _stderr_io_loop() -> void:
 					_enqueue_stderr_line(buffer.get_string_from_utf8().strip_edges())
 					buffer.clear()
 				continue
-			if read_error == ERR_BUSY:
+			if read_error == ERR_BUSY or read_error == ERR_FILE_CANT_READ:
 				break
 			if read_error != ERR_FILE_EOF:
 				_enqueue_protocol_error("Codex stderr pipe read failed (error %s)." % read_error, "")
