@@ -28,6 +28,7 @@ jobs:
         run: |
           mkdir -p tests/codex_native_chat/addons
           cp -R addons/codex_native_chat tests/codex_native_chat/addons/
+          chmod +x tests/codex_native_chat/mock_codex.py
 
       - name: Load addon in the Godot editor
         env:
