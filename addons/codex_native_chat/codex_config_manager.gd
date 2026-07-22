@@ -1,0 +1,98 @@
+@tool
+extends RefCounted
+class_name CodexNativeConfigManager
+
+const MCP_SECTION := "[mcp_servers.godot-mcp]"
+
+func ensure_project_mcp_config(project_root: String, endpoint: String) -> Dictionary:
+	var codex_dir := project_root.path_join(".codex")
+	var config_path := codex_dir.path_join("config.toml")
+	var make_error := DirAccess.make_dir_recursive_absolute(codex_dir)
+	if make_error != OK and make_error != ERR_ALREADY_EXISTS:
+		return {
+			"success": false,
+			"changed": false,
+			"path": config_path,
+			"error": "Could not create %s (error %s)." % [codex_dir, make_error],
+		}
+
+	var original := ""
+	if FileAccess.file_exists(config_path):
+		var read_file := FileAccess.open(config_path, FileAccess.READ)
+		if read_file == null:
+			return {
+				"success": false,
+				"changed": false,
+				"path": config_path,
+				"error": "Could not read %s." % config_path,
+			}
+		original = read_file.get_as_text()
+		read_file.close()
+
+	var block := "%s\nurl = \"%s\"\nenabled = true\nstartup_timeout_sec = 20" % [
+		MCP_SECTION,
+		_escape_toml(endpoint),
+	]
+	var updated := _replace_table(original, MCP_SECTION, block)
+	if updated == original:
+		return {
+			"success": true,
+			"changed": false,
+			"path": config_path,
+			"error": "",
+		}
+
+	var write_file := FileAccess.open(config_path, FileAccess.WRITE)
+	if write_file == null:
+		return {
+			"success": false,
+			"changed": false,
+			"path": config_path,
+			"error": "Could not write %s." % config_path,
+		}
+	write_file.store_string(updated)
+	write_file.close()
+
+	return {
+		"success": true,
+		"changed": true,
+		"path": config_path,
+		"error": "",
+	}
+
+func _replace_table(source: String, section: String, replacement: String) -> String:
+	var lines := source.split("\n", true)
+	var output: Array[String] = []
+	var skipping := false
+	var replaced := false
+
+	for raw_line in lines:
+		var line := str(raw_line)
+		var stripped := line.strip_edges()
+
+		if stripped == section:
+			if not replaced:
+				for replacement_line in replacement.split("\n"):
+					output.append(str(replacement_line))
+			replaced = true
+			skipping = true
+			continue
+
+		if skipping and stripped.begins_with("[") and stripped.ends_with("]"):
+			skipping = false
+
+		if not skipping:
+			output.append(line)
+
+	if not replaced:
+		while not output.is_empty() and output.back().strip_edges().is_empty():
+			output.pop_back()
+		if not output.is_empty():
+			output.append("")
+		for replacement_line in replacement.split("\n"):
+			output.append(str(replacement_line))
+
+	return "\n".join(output).strip_edges() + "\n"
+
+func _escape_toml(value: String) -> String:
+	return value.replace("\\", "\\\\").replace("\"", "\\\"")
