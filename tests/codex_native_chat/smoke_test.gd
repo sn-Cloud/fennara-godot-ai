@@ -1,7 +1,7 @@
 extends SceneTree
 
 func _init() -> void:
-	var paths := [
+	var paths: Array[String] = [
 		"res://addons/codex_native_chat/codex_app_server_client.gd",
 		"res://addons/codex_native_chat/codex_config_manager.gd",
 		"res://addons/codex_native_chat/codex_native_chat_dock.gd",
@@ -15,16 +15,16 @@ func _init() -> void:
 			quit(1)
 			return
 
-	var manager_script := load("res://addons/codex_native_chat/codex_config_manager.gd")
-	var manager = manager_script.new()
+	var manager_script: Script = load("res://addons/codex_native_chat/codex_config_manager.gd")
+	var manager: Object = manager_script.new()
 	var test_root := ProjectSettings.globalize_path("res://.config_test")
 	DirAccess.make_dir_recursive_absolute(test_root)
-	var first := manager.ensure_project_mcp_config(test_root, "http://127.0.0.1:9080/mcp")
+	var first: Dictionary = manager.ensure_project_mcp_config(test_root, "http://127.0.0.1:9080/mcp")
 	if not bool(first.get("success", false)):
 		push_error("MCP config creation failed: %s" % first.get("error", ""))
 		quit(1)
 		return
-	var second := manager.ensure_project_mcp_config(test_root, "http://127.0.0.1:19080/mcp")
+	var second: Dictionary = manager.ensure_project_mcp_config(test_root, "http://127.0.0.1:19080/mcp")
 	if not bool(second.get("success", false)):
 		push_error("MCP config update failed: %s" % second.get("error", ""))
 		quit(1)
