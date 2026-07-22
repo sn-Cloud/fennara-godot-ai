@@ -87,6 +87,11 @@ func _run() -> void:
 		_fail("The Stop button remained enabled after interruption completed.")
 		return
 
+	await create_timer(0.05).timeout
+	if not _dock._request_context.is_empty():
+		_fail("Completed RPC request contexts were not released: %s" % _dock._request_context)
+		return
+
 	_dock.shutdown()
 	_dock.queue_free()
 	print("Codex Native Chat control workflow smoke test passed.")
