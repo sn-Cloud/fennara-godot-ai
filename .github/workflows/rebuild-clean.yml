@@ -29,6 +29,8 @@ jobs:
           set +e
           ok=true
           mkdir -p clean logs
+          exec > >(tee logs/validate.log) 2>&1
+          echo "阶段 1：解码并解压源码"
           cat .rebuild/chunk_* | base64 -d > rebuild.tar.gz
           if [[ $? -ne 0 ]]; then ok=false; fi
           if [[ "$ok" == "true" ]]; then
@@ -36,22 +38,31 @@ jobs:
             if [[ $? -ne 0 ]]; then ok=false; fi
           fi
           if [[ "$ok" == "true" ]]; then
-            curl -L --retry 3 -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip
+            echo "阶段 2：下载 Godot 4.6.3"
+            curl --fail --location --retry 8 --retry-all-errors --connect-timeout 30 -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip
+            if [[ $? -ne 0 ]]; then ok=false; fi
+          fi
+          if [[ "$ok" == "true" ]]; then
+            echo "阶段 3：校验并解压 Godot"
+            unzip -t godot.zip
             if [[ $? -ne 0 ]]; then ok=false; fi
           fi
           if [[ "$ok" == "true" ]]; then
             unzip -q godot.zip
             chmod +x Godot_v4.6.3-stable_linux.x86_64
+            echo "阶段 4：安装官方 Codex 和 Kimi Code CLI"
             npm install -g @openai/codex @moonshot-ai/kimi-code@latest > logs/npm.log 2>&1
             if [[ $? -ne 0 ]]; then ok=false; fi
           fi
           if [[ "$ok" == "true" ]]; then
+            echo "阶段 5：验证官方 CLI"
             codex --version | tee logs/codex-version.log
             if [[ ${PIPESTATUS[0]} -ne 0 ]]; then ok=false; fi
             kimi --version | tee logs/kimi-version.log
             if [[ ${PIPESTATUS[0]} -ne 0 ]]; then ok=false; fi
           fi
           if [[ "$ok" == "true" ]]; then
+            echo "阶段 6：执行 Godot 插件和双后端测试"
             mkdir -p clean/tests/godot_ai_manager/addons
             cp -R clean/addons/godot_ai_manager clean/tests/godot_ai_manager/addons/
             chmod +x clean/tests/godot_ai_manager/mock_codex.py clean/tests/godot_ai_manager/mock_kimi.py
@@ -65,6 +76,7 @@ jobs:
             ./Godot_v4.6.3-stable_linux.x86_64 --headless --path clean/tests/godot_ai_manager --script res://official_cli_smoke_test.gd > logs/official.log 2>&1
             if [[ $? -ne 0 ]]; then ok=false; fi
           fi
+          echo "最终内部结果：$ok"
           echo "$ok" > logs/result.txt
           echo "ok=$ok" >> "$GITHUB_OUTPUT"
           exit 0
@@ -93,6 +105,8 @@ jobs:
         run: |
           $ok = $true
           New-Item -ItemType Directory -Force -Path clean, logs | Out-Null
+          Start-Transcript -Path logs/validate.log -Force
+          Write-Host "阶段 1：解码并解压源码"
           try {
             $parts = Get-ChildItem .rebuild/chunk_* | Sort-Object Name
             $builder = [System.Text.StringBuilder]::new()
@@ -110,7 +124,8 @@ jobs:
 
           if ($ok) {
             try {
-              Invoke-WebRequest -Uri "https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_win64.exe.zip" -OutFile godot.zip
+              Write-Host "阶段 2：下载并安装依赖"
+              Invoke-WebRequest -MaximumRetryCount 5 -RetryIntervalSec 5 -Uri "https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_win64.exe.zip" -OutFile godot.zip
               Expand-Archive godot.zip -DestinationPath . -Force
               npm install -g @openai/codex @moonshot-ai/kimi-code@latest *> logs/npm.log
               if ($LASTEXITCODE -ne 0) { $ok = $false }
@@ -149,6 +164,8 @@ jobs:
           }
 
           $value = if ($ok) { "true" } else { "false" }
+          Write-Host "最终内部结果：$value"
+          Stop-Transcript
           $value | Out-File logs/result.txt
           "ok=$value" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           exit 0
