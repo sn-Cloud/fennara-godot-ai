@@ -1,11 +1,14 @@
 extends SceneTree
 
 var _mock_client: Object
+var _mock_started_seen := false
 var _mock_response_seen := false
 var _mock_notification_seen := false
 var _mock_server_request_seen := false
 var _mock_approval_round_trip_seen := false
 var _mock_error := ""
+var _mock_stopped_reason := ""
+var _mock_status := ""
 
 func _init() -> void:
 	call_deferred("_run")
@@ -63,11 +66,14 @@ func _test_app_server_transport() -> bool:
 	_mock_client.server_request_received.connect(_on_mock_server_request_received)
 	_mock_client.protocol_error.connect(_on_mock_protocol_error)
 	_mock_client.stderr_received.connect(_on_mock_stderr)
+	_mock_client.stopped.connect(_on_mock_stopped)
+	_mock_client.status_changed.connect(_on_mock_status_changed)
 
 	var mock_path := ProjectSettings.globalize_path("res://mock_codex.py")
 	var start_result: Dictionary = _mock_client.start(mock_path)
 	if not bool(start_result.get("success", false)):
 		return _fail("Mock app-server failed to start: %s" % start_result.get("error", ""))
+	print("Mock app-server start result: %s" % start_result)
 
 	var request_id: int = _mock_client.send_request("initialize", {
 		"clientInfo": {
@@ -83,15 +89,18 @@ func _test_app_server_transport() -> bool:
 	var deadline := Time.get_ticks_msec() + 5000
 	while Time.get_ticks_msec() < deadline:
 		_mock_client.poll()
-		if _mock_response_seen and _mock_notification_seen and _mock_server_request_seen and _mock_approval_round_trip_seen:
+		if _mock_started_seen and _mock_response_seen and _mock_notification_seen and _mock_server_request_seen and _mock_approval_round_trip_seen:
 			break
 		await create_timer(0.01).timeout
 
+	var was_running: bool = _mock_client.is_running()
 	_mock_client.shutdown("test_complete")
 	if not _mock_error.is_empty():
 		return _fail(_mock_error)
+	if not _mock_started_seen:
+		return _fail("Mock process emitted no startup notification. running=%s status=%s stopped=%s" % [was_running, _mock_status, _mock_stopped_reason])
 	if not _mock_response_seen:
-		return _fail("No initialize response was received from the mock app-server.")
+		return _fail("No initialize response was received from the mock app-server. running=%s status=%s stopped=%s" % [was_running, _mock_status, _mock_stopped_reason])
 	if not _mock_notification_seen:
 		return _fail("No notification was received from the mock app-server.")
 	if not _mock_server_request_seen:
@@ -107,7 +116,10 @@ func _on_mock_response_received(_request_id: Variant, method: String, _result: V
 		_mock_error = "Mock response error: %s" % error
 
 func _on_mock_notification_received(method: String, params: Dictionary) -> void:
-	if method == "mock/notification" and bool(params.get("ok", false)):
+	if method == "mock/started":
+		_mock_started_seen = true
+		print("Mock process startup notification: %s" % params)
+	elif method == "mock/notification" and bool(params.get("ok", false)):
 		_mock_notification_seen = true
 	elif method == "mock/approvalReceived" and str(params.get("decision", "")) == "accept":
 		_mock_approval_round_trip_seen = true
@@ -123,6 +135,12 @@ func _on_mock_protocol_error(message: String, raw_line: String) -> void:
 
 func _on_mock_stderr(text: String) -> void:
 	_mock_error = "Mock app-server stderr: %s" % text
+
+func _on_mock_stopped(reason: String) -> void:
+	_mock_stopped_reason = reason
+
+func _on_mock_status_changed(status: String) -> void:
+	_mock_status = status
 
 func _fail(message: String) -> bool:
 	push_error(message)
