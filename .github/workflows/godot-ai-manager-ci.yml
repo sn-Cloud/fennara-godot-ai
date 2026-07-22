@@ -1,0 +1,84 @@
+name: Godot AI 管理器完整测试
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Godot 4.6.3
+        run: |
+          curl -L --retry 3 -o godot.zip https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip
+          unzip -q godot.zip
+          chmod +x Godot_v4.6.3-stable_linux.x86_64
+      - name: 安装官方 Codex 和 Kimi Code CLI
+        run: |
+          npm install -g @openai/codex @moonshot-ai/kimi-code@latest
+          codex --version
+          kimi --version
+      - name: 准备测试项目
+        run: |
+          mkdir -p tests/godot_ai_manager/addons
+          cp -R addons/godot_ai_manager tests/godot_ai_manager/addons/
+          chmod +x tests/godot_ai_manager/mock_codex.py tests/godot_ai_manager/mock_kimi.py
+      - name: 加载编辑器插件
+        env:
+          CI: "true"
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path tests/godot_ai_manager --editor --quit-after 5
+      - name: 运行双后端测试
+        env:
+          CI: "true"
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path tests/godot_ai_manager --script res://backend_smoke_test.gd
+      - name: 运行官方 CLI 握手测试
+        env:
+          CI: "true"
+        run: ./Godot_v4.6.3-stable_linux.x86_64 --headless --path tests/godot_ai_manager --script res://official_cli_smoke_test.gd
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Godot 4.6.3
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_win64.exe.zip" -OutFile godot.zip
+          Expand-Archive godot.zip -DestinationPath . -Force
+      - name: 安装官方 Codex 和 Kimi Code CLI
+        shell: pwsh
+        run: |
+          npm install -g @openai/codex @moonshot-ai/kimi-code@latest
+          codex --version
+          kimi --version
+      - name: 准备测试项目
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path tests/godot_ai_manager/addons | Out-Null
+          Copy-Item -Recurse -Force addons/godot_ai_manager tests/godot_ai_manager/addons/
+      - name: 加载编辑器插件
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe --headless --path tests/godot_ai_manager --editor --quit-after 5
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 运行双后端测试
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe --headless --path tests/godot_ai_manager --script res://backend_smoke_test.gd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: 运行官方 CLI 握手测试
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          & .\Godot_v4.6.3-stable_win64.exe --headless --path tests/godot_ai_manager --script res://official_cli_smoke_test.gd
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
