@@ -163,7 +163,10 @@ func _drain_pipe(pipe: FileAccess, is_stderr: bool) -> void:
 		return
 
 	for _iteration in range(32):
-		var bytes := pipe.get_buffer(65536)
+		var available := pipe.get_length()
+		if available <= 0:
+			break
+		var bytes := pipe.get_buffer(mini(available, 65536))
 		if bytes.is_empty():
 			break
 		var text := bytes.get_string_from_utf8()
@@ -199,12 +202,12 @@ func _flush_stderr_lines() -> void:
 func _write_message(message: Dictionary) -> void:
 	if _stdio == null:
 		return
-	var payload := (JSON.stringify(message) + "\n").to_utf8_buffer()
-	_stdio.store_buffer(payload)
+	var serialized := JSON.stringify(message)
+	var stored := _stdio.store_line(serialized)
 	_stdio.flush()
 	var write_error := _stdio.get_error()
-	if write_error != OK and write_error != ERR_BUSY:
-		protocol_error.emit("Failed to write to Codex app-server pipe (error %s)." % write_error, JSON.stringify(message))
+	if not stored or (write_error != OK and write_error != ERR_BUSY):
+		protocol_error.emit("Failed to write to Codex app-server pipe (error %s)." % write_error, serialized)
 
 func _parse_message(line: String) -> void:
 	var parsed := JSON.parse_string(line)
