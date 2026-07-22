@@ -7,8 +7,6 @@ var _mock_notification_seen := false
 var _mock_server_request_seen := false
 var _mock_approval_round_trip_seen := false
 var _mock_error := ""
-var _mock_stopped_reason := ""
-var _mock_status := ""
 
 func _init() -> void:
 	call_deferred("_run")
@@ -32,8 +30,7 @@ func _test_resource_loading() -> bool:
 		"res://addons/codex_native_chat/codex_native_chat_dock.tscn",
 	]
 	for path in paths:
-		var resource := load(path)
-		if resource == null:
+		if load(path) == null:
 			return _fail("Failed to load %s" % path)
 	return true
 
@@ -66,14 +63,11 @@ func _test_app_server_transport() -> bool:
 	_mock_client.server_request_received.connect(_on_mock_server_request_received)
 	_mock_client.protocol_error.connect(_on_mock_protocol_error)
 	_mock_client.stderr_received.connect(_on_mock_stderr)
-	_mock_client.stopped.connect(_on_mock_stopped)
-	_mock_client.status_changed.connect(_on_mock_status_changed)
 
 	var mock_path := ProjectSettings.globalize_path("res://mock_codex.py")
 	var start_result: Dictionary = _mock_client.start(mock_path)
 	if not bool(start_result.get("success", false)):
 		return _fail("Mock app-server failed to start: %s" % start_result.get("error", ""))
-	print("Mock app-server start result: %s" % start_result)
 
 	var request_id: int = _mock_client.send_request("initialize", {
 		"clientInfo": {
@@ -93,17 +87,13 @@ func _test_app_server_transport() -> bool:
 			break
 		await create_timer(0.01).timeout
 
-	var queued_lines: int = _mock_client._outgoing_lines.size()
-	var pipe_error: int = _mock_client._stdio.get_error() if _mock_client._stdio != null else -1
-	var was_running: bool = _mock_client.is_running()
-	print("Transport deadline state: queued=%s pipe_error=%s running=%s" % [queued_lines, pipe_error, was_running])
 	_mock_client.shutdown("test_complete")
 	if not _mock_error.is_empty():
 		return _fail(_mock_error)
 	if not _mock_started_seen:
-		return _fail("Mock process emitted no startup notification. running=%s status=%s stopped=%s" % [was_running, _mock_status, _mock_stopped_reason])
+		return _fail("Mock app-server did not emit its startup notification.")
 	if not _mock_response_seen:
-		return _fail("No initialize response was received from the mock app-server. queued=%s pipe_error=%s running=%s status=%s stopped=%s" % [queued_lines, pipe_error, was_running, _mock_status, _mock_stopped_reason])
+		return _fail("No initialize response was received from the mock app-server.")
 	if not _mock_notification_seen:
 		return _fail("No notification was received from the mock app-server.")
 	if not _mock_server_request_seen:
@@ -121,7 +111,6 @@ func _on_mock_response_received(_request_id: Variant, method: String, _result: V
 func _on_mock_notification_received(method: String, params: Dictionary) -> void:
 	if method == "mock/started":
 		_mock_started_seen = true
-		print("Mock process startup notification: %s" % params)
 	elif method == "mock/notification" and bool(params.get("ok", false)):
 		_mock_notification_seen = true
 	elif method == "mock/approvalReceived" and str(params.get("decision", "")) == "accept":
@@ -134,19 +123,10 @@ func _on_mock_server_request_received(request_id: Variant, method: String, _para
 	_mock_client.respond(request_id, {"decision": "accept"})
 
 func _on_mock_protocol_error(message: String, raw_line: String) -> void:
-	if message.contains("pipe read failed (error 14)"):
-		print("Ignoring transient nonblocking pipe read status: %s" % message)
-		return
 	_mock_error = "Protocol error: %s %s" % [message, raw_line]
 
 func _on_mock_stderr(text: String) -> void:
 	_mock_error = "Mock app-server stderr: %s" % text
-
-func _on_mock_stopped(reason: String) -> void:
-	_mock_stopped_reason = reason
-
-func _on_mock_status_changed(status: String) -> void:
-	_mock_status = status
 
 func _fail(message: String) -> bool:
 	push_error(message)
