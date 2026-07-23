@@ -1,0 +1,144 @@
+name: 临时验证 MCP 引导与多厂商 API v4
+
+on:
+  push:
+    branches:
+      - agent/godot-codex-native-chat
+    paths:
+      - .apply_provider_update_v4/trigger.txt
+
+permissions:
+  contents: write
+
+concurrency:
+  group: provider-update-v4
+  cancel-in-progress: true
+
+jobs:
+  linux-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      ok: ${{ steps.verify.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: verify
+        name: Linux 验证（问题只记录）
+        shell: bash
+        run: |
+          set +e
+          OK=true
+          LOG="$RUNNER_TEMP/provider-linux-v4.log"
+          : > "$LOG"
+          cat .apply_provider_update_v4/part_* > "$RUNNER_TEMP/payload.b64" || OK=false
+          base64 -d "$RUNNER_TEMP/payload.b64" > "$RUNNER_TEMP/payload.tar.gz" 2>>"$LOG" || OK=false
+          mkdir -p "$RUNNER_TEMP/payload"
+          tar -xzf "$RUNNER_TEMP/payload.tar.gz" -C "$RUNNER_TEMP/payload" >>"$LOG" 2>&1 || OK=false
+          cp -a "$RUNNER_TEMP/payload/." . >>"$LOG" 2>&1 || OK=false
+          python3 -m py_compile tests/godot_ai_manager/mock_provider_server.py >>"$LOG" 2>&1 || OK=false
+          curl -L --retry 3 --fail -o "$RUNNER_TEMP/godot.zip" https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_linux.x86_64.zip >>"$LOG" 2>&1 || OK=false
+          unzip -q "$RUNNER_TEMP/godot.zip" -d "$RUNNER_TEMP/godot" >>"$LOG" 2>&1 || OK=false
+          chmod +x "$RUNNER_TEMP/godot/Godot_v4.6.3-stable_linux.x86_64" >>"$LOG" 2>&1 || OK=false
+          npm install -g @openai/codex @moonshot-ai/kimi-code@latest >>"$LOG" 2>&1 || OK=false
+          codex --version >>"$LOG" 2>&1 || OK=false
+          kimi --version >>"$LOG" 2>&1 || OK=false
+          rm -rf tests/godot_ai_manager/addons/godot_ai_manager
+          mkdir -p tests/godot_ai_manager/addons
+          cp -R addons/godot_ai_manager tests/godot_ai_manager/addons/ >>"$LOG" 2>&1 || OK=false
+          chmod +x tests/godot_ai_manager/mock_codex.py tests/godot_ai_manager/mock_kimi.py tests/godot_ai_manager/mock_provider_server.py
+          GODOT="$RUNNER_TEMP/godot/Godot_v4.6.3-stable_linux.x86_64"
+          CI=true "$GODOT" --headless --path tests/godot_ai_manager --editor --quit-after 5 >>"$LOG" 2>&1 || OK=false
+          CI=true "$GODOT" --headless --path tests/godot_ai_manager --script res://backend_smoke_test.gd >>"$LOG" 2>&1 || OK=false
+          CI=true "$GODOT" --headless --path tests/godot_ai_manager --script res://official_cli_smoke_test.gd >>"$LOG" 2>&1 || OK=false
+          cat "$LOG"
+          echo "ok=$OK" | tr '[:upper:]' '[:lower:]' >> "$GITHUB_OUTPUT"
+          exit 0
+
+  windows-test:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    outputs:
+      ok: ${{ steps.verify.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: verify
+        name: Windows 验证（问题只记录）
+        shell: pwsh
+        run: |
+          $ok = $true
+          $log = Join-Path $env:RUNNER_TEMP "provider-windows-v4.log"
+          New-Item -ItemType File -Force -Path $log | Out-Null
+          try {
+            $parts = Get-ChildItem .apply_provider_update_v4/part_* | Sort-Object Name
+            $base64 = ($parts | ForEach-Object { Get-Content -Raw $_.FullName }) -join ""
+            [IO.File]::WriteAllBytes((Join-Path $env:RUNNER_TEMP "payload.tar.gz"), [Convert]::FromBase64String($base64))
+            New-Item -ItemType Directory -Force -Path (Join-Path $env:RUNNER_TEMP "payload") | Out-Null
+            tar -xzf (Join-Path $env:RUNNER_TEMP "payload.tar.gz") -C (Join-Path $env:RUNNER_TEMP "payload") 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "无法解压补丁" }
+            Copy-Item -Path (Join-Path $env:RUNNER_TEMP "payload\*") -Destination . -Recurse -Force
+            python -m py_compile tests/godot_ai_manager/mock_provider_server.py 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "Python mock 编译失败" }
+            Invoke-WebRequest -Uri "https://github.com/godotengine/godot-builds/releases/download/4.6.3-stable/Godot_v4.6.3-stable_win64.exe.zip" -OutFile (Join-Path $env:RUNNER_TEMP "godot.zip")
+            Expand-Archive (Join-Path $env:RUNNER_TEMP "godot.zip") -DestinationPath (Join-Path $env:RUNNER_TEMP "godot") -Force
+            npm install -g @openai/codex @moonshot-ai/kimi-code@latest 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "CLI 安装失败" }
+            codex --version 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "Codex 版本检查失败" }
+            kimi --version 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "Kimi 版本检查失败" }
+            Remove-Item tests/godot_ai_manager/addons/godot_ai_manager -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Force -Path tests/godot_ai_manager/addons | Out-Null
+            Copy-Item -Recurse -Force addons/godot_ai_manager tests/godot_ai_manager/addons/
+            $godot = Join-Path $env:RUNNER_TEMP "godot\Godot_v4.6.3-stable_win64.exe"
+            $env:CI = "true"
+            & $godot --headless --path tests/godot_ai_manager --editor --quit-after 5 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "Godot 插件加载失败" }
+            & $godot --headless --path tests/godot_ai_manager --script res://backend_smoke_test.gd 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "后端测试失败" }
+            & $godot --headless --path tests/godot_ai_manager --script res://official_cli_smoke_test.gd 2>&1 | Tee-Object -FilePath $log -Append
+            if ($LASTEXITCODE -ne 0) { throw "官方 CLI 握手失败" }
+          }
+          catch {
+            $_ | Out-String | Tee-Object -FilePath $log -Append
+            $ok = $false
+          }
+          Get-Content $log
+          "ok=$($ok.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+          exit 0
+
+  publish:
+    runs-on: ubuntu-latest
+    needs: [linux-test, windows-test]
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: agent/godot-codex-native-chat
+          fetch-depth: 0
+      - name: 仅在双平台实际通过后提交正式代码
+        shell: bash
+        env:
+          LINUX_OK: ${{ needs.linux-test.outputs.ok }}
+          WINDOWS_OK: ${{ needs.windows-test.outputs.ok }}
+        run: |
+          set -euo pipefail
+          echo "Linux: $LINUX_OK"
+          echo "Windows: $WINDOWS_OK"
+          if [[ "$LINUX_OK" != "true" || "$WINDOWS_OK" != "true" ]]; then
+            echo "至少一个平台未通过，不发布正式代码。"
+            exit 0
+          fi
+          cat .apply_provider_update_v4/part_* > "$RUNNER_TEMP/payload.b64"
+          base64 -d "$RUNNER_TEMP/payload.b64" > "$RUNNER_TEMP/payload.tar.gz"
+          mkdir -p "$RUNNER_TEMP/payload"
+          tar -xzf "$RUNNER_TEMP/payload.tar.gz" -C "$RUNNER_TEMP/payload"
+          cp -a "$RUNNER_TEMP/payload/." .
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md addons/godot_ai_manager docs tests/godot_ai_manager
+          if git diff --cached --quiet; then
+            echo "没有待发布更改。"
+            exit 0
+          fi
+          git commit -m "实现 Godot MCP Native 引导并恢复多厂商 API 后端"
+          git push origin HEAD:agent/godot-codex-native-chat
