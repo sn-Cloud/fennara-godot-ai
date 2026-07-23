@@ -6,6 +6,11 @@ on:
       - agent/godot-codex-native-chat
     paths:
       - .apply_provider_update/trigger.txt
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .apply_provider_update/trigger.txt
 
 permissions:
   contents: write
