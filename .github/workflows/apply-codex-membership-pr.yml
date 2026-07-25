@@ -53,12 +53,36 @@ jobs:
       - name: Apply Codex integration
         if: steps.migration.outputs.required == 'true'
         shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
         run: |
-          set -euo pipefail
-          python .github/scripts/apply_codex_core.py
-          python .github/scripts/apply_codex_runtime.py
-          python .github/scripts/apply_codex_ui.py
-          python .github/scripts/apply_codex_docs.py
+          set +e
+          : > /tmp/codex-migration.log
+          status=0
+          for script in \
+            .github/scripts/apply_codex_core.py \
+            .github/scripts/apply_codex_runtime.py \
+            .github/scripts/apply_codex_ui.py \
+            .github/scripts/apply_codex_docs.py
+          do
+            echo "== ${script} ==" >> /tmp/codex-migration.log
+            python "${script}" >> /tmp/codex-migration.log 2>&1
+            status=$?
+            if [[ ${status} -ne 0 ]]; then
+              break
+            fi
+          done
+          if [[ ${status} -ne 0 ]]; then
+            git reset --hard HEAD
+            cp /tmp/codex-migration.log .github/codex-migration-error.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/codex-migration-error.txt
+            git commit -m "ci: record Codex migration patch failure"
+            git push origin HEAD:"${HEAD_BRANCH}"
+            cat /tmp/codex-migration.log
+            exit ${status}
+          fi
 
       - name: Format Rust
         if: steps.migration.outputs.required == 'true'
@@ -102,6 +126,7 @@ jobs:
           rm -f .github/scripts/apply_codex_docs.py
           rm -f .github/workflows/apply-codex-membership.yml
           rm -f .github/codex-membership.trigger
+          rm -f .github/codex-migration-error.txt
 
       - name: Commit tested migration
         if: steps.migration.outputs.required == 'true'
