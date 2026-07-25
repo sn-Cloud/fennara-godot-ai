@@ -44,6 +44,8 @@ pub(super) async fn stream_one_assistant<S>(
     assistant_message_id: &str,
     state: &AppState,
     chat_id: &str,
+    project_path: Option<String>,
+    approval_mode: String,
     trace: trace::TraceRecorder,
 ) -> Result<Result<StreamedAssistant, AssistantStreamError>, S::Error>
 where
@@ -69,6 +71,8 @@ where
                 messages: messages_for_task,
                 tools: tools_for_task,
                 max_output_tokens: None,
+                cwd: project_path,
+                approval_mode,
             },
             Some(trace_for_task),
             |item| {

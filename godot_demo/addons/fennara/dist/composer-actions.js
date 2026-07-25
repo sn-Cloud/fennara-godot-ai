@@ -16,6 +16,7 @@
     const setCurrentReasoningEffort = callbacks.setCurrentReasoningEffort || function () {};
     const cleanReasoningEffort = callbacks.cleanReasoningEffort || ((effort) => effort || "medium");
     const providerRequiresApiKey = callbacks.providerRequiresApiKey || (() => false);
+    const providerRequiresAccount = callbacks.providerRequiresAccount || (() => false);
     const providerConnected = callbacks.providerConnected || (() => false);
     const openProviderPicker = callbacks.openProviderPicker || function () {};
     const openModelPicker = callbacks.openModelPicker || function () {};
@@ -62,7 +63,8 @@
         openModelPicker();
         return;
       }
-      if (providerRequiresApiKey(currentProvider) && !providerConnected(currentProvider)) {
+      if ((providerRequiresApiKey(currentProvider) || providerRequiresAccount(currentProvider))
+          && !providerConnected(currentProvider)) {
         openProviderPicker();
         return;
       }

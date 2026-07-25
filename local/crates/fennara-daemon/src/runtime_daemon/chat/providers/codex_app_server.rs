@@ -84,7 +84,11 @@ pub(crate) async fn account_status() -> Result<CodexAccountStatus, String> {
         .await
         .map_err(|error| error.user_message())?;
     let result = connection
-        .request("account/read", json!({ "refreshToken": false }), RPC_TIMEOUT)
+        .request(
+            "account/read",
+            json!({ "refreshToken": false }),
+            RPC_TIMEOUT,
+        )
         .await
         .map_err(|error| error.user_message())?;
     let status = account_status_from_result(&result, true, false, None);
@@ -193,7 +197,11 @@ where
 {
     let mut connection = CodexConnection::spawn().await?;
     let account = connection
-        .request("account/read", json!({ "refreshToken": false }), RPC_TIMEOUT)
+        .request(
+            "account/read",
+            json!({ "refreshToken": false }),
+            RPC_TIMEOUT,
+        )
         .await?;
     let account_status = account_status_from_result(&account, true, false, None);
     store_account_status(account_status.clone());
@@ -206,10 +214,17 @@ where
     }
 
     let mut thread_params = Map::new();
-    if let Some(cwd) = request.cwd.as_deref().filter(|value| !value.trim().is_empty()) {
+    if let Some(cwd) = request
+        .cwd
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
         thread_params.insert("cwd".to_string(), Value::String(cwd.to_string()));
     }
-    thread_params.insert("approvalPolicy".to_string(), Value::String("never".to_string()));
+    thread_params.insert(
+        "approvalPolicy".to_string(),
+        Value::String("never".to_string()),
+    );
     thread_params.insert(
         "sandbox".to_string(),
         Value::String(
@@ -722,7 +737,8 @@ impl CodexConnection {
             "mcpServer/elicitation/request" => json!({ "action": "decline" }),
             _ => json!({}),
         };
-        self.write_json(&json!({ "id": id, "result": result })).await?;
+        self.write_json(&json!({ "id": id, "result": result }))
+            .await?;
         Ok(true)
     }
 
@@ -750,12 +766,15 @@ impl CodexConnection {
                 message: format!("Could not write to Codex app-server: {error}"),
                 retryable: false,
             })?;
-        self.stdin.flush().await.map_err(|error| LlmError::ProviderApi {
-            provider: PROVIDER_NAME.to_string(),
-            status: None,
-            message: format!("Could not flush Codex app-server request: {error}"),
-            retryable: false,
-        })
+        self.stdin
+            .flush()
+            .await
+            .map_err(|error| LlmError::ProviderApi {
+                provider: PROVIDER_NAME.to_string(),
+                status: None,
+                message: format!("Could not flush Codex app-server request: {error}"),
+                retryable: false,
+            })
     }
 
     async fn shutdown(&mut self) {
@@ -788,9 +807,8 @@ fn rpc_error(error: &Value) -> LlmError {
 fn codex_app_server_command() -> Result<Command, LlmError> {
     let executable = resolve_codex_command().ok_or_else(|| LlmError::ProviderInit {
         provider: PROVIDER_NAME.to_string(),
-        message:
-            "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND."
-                .to_string(),
+        message: "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND."
+            .to_string(),
     })?;
 
     #[cfg(windows)]

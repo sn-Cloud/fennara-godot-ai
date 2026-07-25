@@ -284,6 +284,48 @@ where
             .await
         }
         "get_project_status" => send_project_status(sender, request_id, state, bound_project).await,
+        "codex_account_status" => match providers::codex_app_server::account_status().await {
+            Ok(status) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_account_status",
+                        "request_id": request_id,
+                        "status": status
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_account_failed", &error).await,
+        },
+        "codex_login_start" => match providers::codex_app_server::start_login().await {
+            Ok(login) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_login_started",
+                        "request_id": request_id,
+                        "login": login
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_login_failed", &error).await,
+        },
+        "codex_logout" => match providers::codex_app_server::logout().await {
+            Ok(status) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_account_status",
+                        "request_id": request_id,
+                        "status": status
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_logout_failed", &error).await,
+        },
         "prepare_fennara_update" => {
             match godot_bridge::request_fennara_update(state, &bound_project.session_id).await {
                 Ok(()) => {

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use super::anthropic;
 use super::anthropic_providers;
 use super::catalog_cache;
+use super::codex;
 use super::custom;
 use super::deepseek;
 use super::lmstudio;
@@ -110,6 +111,11 @@ impl Catalog {
     ) -> Self {
         let mut catalog = Self::default();
         catalog.local_model_limits = settings.local_model_limits.clone();
+        catalog.insert_provider(codex::provider_definition());
+        catalog.insert_model(codex::model_definition(
+            codex::DEFAULT_MODEL_ID,
+            Some("Codex account default".to_string()),
+        ));
         catalog.insert_provider(openai::provider_definition(
             settings.openai_api_key.as_deref(),
         ));
@@ -338,6 +344,7 @@ fn resolve_model(
 
 fn dynamic_model(provider_id: &ProviderId, model_id: &ModelId) -> ModelDefinition {
     match provider_id.as_str() {
+        ProviderId::CODEX => codex::model_definition(model_id.as_str(), None),
         ProviderId::OPENAI => openai::model_definition(model_id.as_str(), None),
         ProviderId::ANTHROPIC => anthropic::model_definition(model_id.as_str(), None),
         ProviderId::OPENROUTER => openrouter::model_definition(model_id.as_str(), None),

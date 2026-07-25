@@ -41,6 +41,7 @@
     const providerStatusLabel = callbacks.providerStatusLabel || (() => "");
     const providerUsesBaseUrlSetup = callbacks.providerUsesBaseUrlSetup || (() => false);
     const chooseProvider = callbacks.chooseProvider || noop;
+    const manageAccountProvider = callbacks.manageAccountProvider || noop;
 
     function openModelPicker(forceOpen = false) {
       if (!ensureDaemonConnected()) {
@@ -264,6 +265,10 @@
         event.stopPropagation();
         if (isCustom) {
           openCustomProviderPrompt(provider);
+          return;
+        }
+        if (provider.auth?.type === "account") {
+          manageAccountProvider(provider);
           return;
         }
         if (canUpdateKey) {

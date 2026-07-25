@@ -1303,6 +1303,8 @@ mod tests {
             },
             messages: vec![json!({ "role": "user", "content": "hello" })],
             tools: Vec::new(),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         }
     }
 }

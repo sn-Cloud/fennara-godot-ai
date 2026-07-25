@@ -237,6 +237,8 @@ mod tests {
             model: resolved,
             messages: vec![json!({ "role": "user", "content": "x".repeat(2000) })],
             tools: Vec::new(),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         };
 
         assert!(matches!(
@@ -276,6 +278,8 @@ mod tests {
                 messages: vec![json!({ "role": "user", "content": "hello" })],
                 tools: Vec::new(),
                 max_output_tokens: None,
+                cwd: None,
+                approval_mode: "ask".to_string(),
             },
         )
         .unwrap();
@@ -344,6 +348,8 @@ mod tests {
                 ]
             })],
             tools: Vec::new(),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         };
         let current_image_request = LlmRequest {
             model: resolved,
@@ -360,6 +366,8 @@ mod tests {
                 ]
             })],
             tools: Vec::new(),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         };
 
         assert!(estimate_request_tokens(&placeholder_request) < 100);
@@ -413,6 +421,8 @@ mod tests {
                 ]
             })],
             tools: Vec::new(),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         };
 
         let estimated = estimate_request_tokens(&request);
