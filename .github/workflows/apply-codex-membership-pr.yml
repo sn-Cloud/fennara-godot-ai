@@ -1,0 +1,117 @@
+name: Apply Codex membership migration from PR
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+    paths:
+      - .github/codex-membership.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  migrate-and-test:
+    if: >-
+      github.head_ref == 'agent/restore-codex-membership-login' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Skip after migration cleanup
+        id: migration
+        shell: bash
+        run: |
+          if [[ -f .github/codex-membership.trigger ]]; then
+            echo "required=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "required=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Rust
+        if: steps.migration.outputs.required == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Set up Node.js
+        if: steps.migration.outputs.required == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply Codex integration
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/apply_codex_core.py
+          python .github/scripts/apply_codex_runtime.py
+          python .github/scripts/apply_codex_ui.py
+          python .github/scripts/apply_codex_docs.py
+
+      - name: Format Rust
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        run: cargo fmt --manifest-path local/Cargo.toml --all
+
+      - name: Check JavaScript syntax
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check ui/chat/app.js
+          node --check ui/chat/provider-popovers.js
+          node --check ui/chat/composer-actions.js
+          node --check godot_demo/addons/fennara/dist/app.js
+          node --check godot_demo/addons/fennara/dist/provider-popovers.js
+          node --check godot_demo/addons/fennara/dist/composer-actions.js
+
+      - name: Test Fennara daemon
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        run: cargo test --manifest-path local/Cargo.toml -p fennara-daemon
+
+      - name: Validate patch
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'account/login/start' local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
+          grep -q 'Codex (ChatGPT account)' README.md
+          grep -q 'codex/default' docs/providers.md
+
+      - name: Remove one-time branch files
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        run: |
+          rm -f .github/scripts/apply_codex_core.py
+          rm -f .github/scripts/apply_codex_runtime.py
+          rm -f .github/scripts/apply_codex_ui.py
+          rm -f .github/scripts/apply_codex_docs.py
+          rm -f .github/workflows/apply-codex-membership.yml
+          rm -f .github/codex-membership.trigger
+
+      - name: Commit tested migration
+        if: steps.migration.outputs.required == 'true'
+        shell: bash
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(codex): restore ChatGPT account login on Fennara 0.4.0"
+          git push origin HEAD:"${HEAD_BRANCH}"
