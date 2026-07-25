@@ -28,7 +28,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | `runtime/` | Source Godot runtime helper scripts used by `runtime_session` and `runtime_script`. |
 | `scripts/` | Versioning, packaging, and release helper scripts. |
 | `ui/chat/` | Source for the optional in-editor web chat UI. |
-| `local/templates/` | Markdown templates written into Godot projects by `fennara install` and refreshed by `fennara update`. |
+| `local/templates/` | Compact project guidelines and on-demand AI knowledge pages written into Godot projects by `fennara install` and refreshed by `fennara update`. |
 | `local/webview-runtimes/` | Manifest/config files for external webview runtimes installed into shared Fennara app data, such as the Linux CEF payload. |
 | `install.ps1` / `install.sh` | Bootstrap scripts that install the Fennara CLI from GitHub releases. |
 | `VERSION` | Version source of truth. |
@@ -36,6 +36,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | `docs/README.md` | Task-oriented documentation index. |
 | `docs/setup.md` | User-facing addon-first setup, chat prerequisites, MCP connection, update flow, and troubleshooting. |
 | `docs/cli.md` | Terminal command reference, CLI-owned install/update behavior, recovery, diagnostics, app-data layout, and automation guidance. |
+| `docs/telemetry.md` | Anonymous activity payload, app-data state, delivery behavior, monthly-active definition, and opt-out controls. |
 | `CONTRIBUTING.md` | Contribution rules. |
 | `SECURITY.md` | Security reporting policy. |
 | `LICENSE.md` | Project license. |
@@ -58,6 +59,8 @@ This is the quick map for contributors and coding agents working in this reposit
 | `local/crates/fennara-cli/src/diagnostics.rs` | User-facing access to the latest or a named sanitized operation report. |
 | `local/crates/fennara-mcp/` | Local stdio MCP server and tool schema forwarding. |
 | `local/crates/fennara-daemon/` | Local daemon used for runtime sessions and Godot bridge work. |
+| `local/crates/fennara-daemon/src/runtime_daemon/telemetry.rs` | Anonymous daily-active scheduler, bounded queue, HTTP delivery, and daemon lifecycle integration. |
+| `local/crates/fennara-daemon/src/runtime_daemon/telemetry/state.rs` | Random installation identity validation, atomic app-data persistence, daily receipt state, and opt-out cleanup. |
 | `local/crates/fennara-daemon/src/runtime_daemon/permissions.rs` | Built-in chat approval modes, tool-risk classification, permission decisions, and pending approval request types. |
 | `local/crates/fennara-daemon/src/runtime_daemon/chat/exec_command.rs` | Daemon-owned built-in chat `exec_command` implementation: shell detection, cwd validation, process spawn, timeout/tree-kill, output capture, result artifact logging, and result formatting. |
 | `local/crates/fennara-daemon/src/runtime_daemon/chat/context_compaction/` | Built-in chat context compaction planner: exact-tail protection, OpenCode-style old tool-result pressure pruning, summary chunk selection/storage/replay, summary prompt serialization, token budgets, and placeholder rendering. |
@@ -104,13 +107,19 @@ This is the quick map for contributors and coding agents working in this reposit
 | `godot_demo/addons/fennara/dist/` | Packaged web UI assets used by the in-editor chat webview. |
 | `godot_demo/addons/fennara/runtime/` | Synced packaged copy of `runtime/` shipped inside the addon. |
 | `godot_demo/tests/first_run_setup_test.gd` | Headless native first-run setup state and deterministic failure test. |
+| `godot_demo/tests/screenshot_scene_contract_test.gd` | Headless native screenshot argument-contract regression test. |
+| `godot_demo/tests/image_sheet_test.gd` | Headless shared screenshot/runtime sheet composition regression test. |
+| `godot_demo/tests/runtime_image_context_test.gd` | Headless runtime raw-frame, sheet, and arbitrary-Image output regression test. |
 
 ## Runtime Helper Source
 
 | Path | Owns |
 | --- | --- |
 | `runtime/game_capture_helper.gd` | Runtime helper entrypoint loaded by the GDExtension for scene sessions and runtime checks. |
-| `runtime/runtime_script_context.gd` | Public `ctx` helper surface exposed to `runtime_script`, including wait/capture/action/input/snapshot/until/raycast/click helpers. |
+| `runtime/image_label.gd` | Compact deterministic labels stamped onto composed Image cells after capture. |
+| `runtime/image_sheet.gd` | Shared pure-Image sheet composition used by screenshot and runtime script contexts. |
+| `runtime/screenshot_script_context.gd` | Public screenshot script facade that adds shared Image composition to the native capture context. |
+| `runtime/runtime_script_context.gd` | Public `ctx` helper surface exposed to `runtime_script`, including raw frames, Image composition/output, waits, input, snapshots, conditions, raycasts, and clicks. |
 | `runtime/runtime_input_driver.gd` | Low-level runtime input event driver for keys, mouse buttons, absolute mouse motion, relative mouse motion, modifiers, and input cleanup. |
 | `runtime/runtime_node_snapshot.gd` | Runtime node lookup, existence checks, stale-reference-safe snapshots, property reads, and child summaries. |
 | `runtime/runtime_physics_query.gd` | Runtime 2D/3D exact raycast and scan helpers with compact hit receipts. |
@@ -162,12 +171,13 @@ This is the quick map for contributors and coding agents working in this reposit
 | Change install/update operation logs, phases, error codes, or diagnostic reports | `local/crates/fennara-cli/src/operation.rs`, `local/crates/fennara-cli/src/operation/`, and `local/crates/fennara-cli/src/diagnostics.rs` |
 | Change webview prerequisite checks | `local/crates/fennara-cli/src/webview_prereq.rs`, `local/crates/fennara-cli/src/webview_runtime.rs`, and `fennara-cpp/src/ui/webview_host*` |
 | Change generated project guidance | `local/templates/` and `local/crates/fennara-cli/src/project_guidance.rs` |
-| Sync generated demo addon guidance | `local/templates/fennara-guidelines.md`, `scripts/sync-guidance.mjs`, and `godot_demo/addons/fennara/ai/guidelines.md` |
+| Sync generated demo addon guidance | `local/templates/fennara-guidelines.md`, `local/templates/fennara-ai/`, `scripts/sync-guidance.mjs`, and `godot_demo/addons/fennara/ai/` |
 | Change MCP app setup | `local/crates/fennara-cli/src/mcp_setup.rs` and `docs/mcp-setup.md` |
 | Change runtime session process/log behavior | `local/crates/fennara-daemon/src/runtime_daemon/runtime_sessions.rs`, `local/crates/fennara-daemon/src/runtime_daemon/runtime_log.rs`, `fennara-cpp/src/tools/runtime_session/`, and `fennara-cpp/src/tool_results/` |
 | Change `runtime_script` ctx helpers, input, snapshots, waits, raycasts, captures, or cleanup | `runtime/`, `scripts/sync-runtime.mjs`, `godot_demo/addons/fennara/runtime/`, `local/schemas/tools/runtime_script.json`, and `docs/tools.md` |
 | Change in-editor chat UI, slash commands, or model/provider picker | `ui/chat/`, `godot_demo/addons/fennara/dist/`, `fennara-cpp/src/ui/dock.cpp`, and `fennara-cpp/src/ui/webview_host*` |
 | Change built-in chat providers | `local/crates/fennara-daemon/src/runtime_daemon/chat/providers/`, `local/crates/fennara-daemon/src/runtime_daemon/chat/models.rs`, `local/crates/fennara-daemon/src/runtime_daemon/chat/settings.rs`, and `ui/chat/` |
+| Change anonymous telemetry fields, scheduling, or privacy controls | `local/crates/fennara-daemon/src/runtime_daemon/telemetry.rs`, `local/crates/fennara-daemon/src/runtime_daemon/telemetry/`, `local/crates/fennara-daemon/src/runtime_daemon/chat/settings.rs`, `ui/chat/`, and `docs/telemetry.md` |
 | Change vendored chat UI libraries | `ui/chat/vendor/`, `godot_demo/addons/fennara/dist/vendor/`, and `THIRD_PARTY_NOTICES.md` |
 | Change C# support | `fennara-cpp/src/csharp/`, `fennara-cpp/include/fennara/csharp/`, and the C# tool schemas and guidance |
 | Change release packages, minimum CLI policy, or CLI self-update | `local/crates/fennara-cli/src/release_manifest.rs`, `local/crates/fennara-cli/src/release_client.rs`, `local/crates/fennara-cli/src/release_package.rs`, `local/crates/fennara-cli/src/self_update.rs`, `scripts/package-preview.mjs`, `scripts/release-policy.mjs`, `scripts/write-release-manifest.mjs`, and `.github/workflows/release.yml` |

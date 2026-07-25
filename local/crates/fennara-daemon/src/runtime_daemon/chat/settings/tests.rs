@@ -3,19 +3,46 @@ use std::collections::BTreeMap;
 #[cfg(windows)]
 use super::replace_settings_file;
 use super::{
-    ChatSettings, CustomHeaderMigration, migrate_custom_provider_headers,
+    ChatSettings, CustomHeaderMigration, env_truthy, migrate_custom_provider_headers,
     migrate_legacy_openrouter_selection, reconcile_custom_provider_models,
 };
 use crate::runtime_daemon::chat::providers::custom::{CustomProviderConfig, CustomProviderModel};
 
 #[test]
+fn legacy_settings_default_to_anonymous_telemetry_enabled() {
+    let settings: ChatSettings =
+        serde_json::from_str(r#"{"model":"openrouter/google/gemini-3.5-flash"}"#).unwrap();
+
+    assert!(settings.telemetry_enabled);
+}
+
+#[test]
+fn telemetry_environment_flags_accept_only_explicit_truthy_values() {
+    assert!(env_truthy(Some(std::ffi::OsStr::new("true"))));
+    assert!(env_truthy(Some(std::ffi::OsStr::new(" YES "))));
+    assert!(env_truthy(Some(std::ffi::OsStr::new("1"))));
+    assert!(!env_truthy(Some(std::ffi::OsStr::new("false"))));
+    assert!(!env_truthy(Some(std::ffi::OsStr::new(""))));
+    assert!(!env_truthy(None));
+}
+
+#[test]
+fn telemetry_environment_override_does_not_change_saved_preference() {
+    let settings = ChatSettings {
+        telemetry_enabled: true,
+        ..ChatSettings::default()
+    };
+
+    assert!(settings.telemetry_enabled);
+    assert!(settings.public().telemetry_enabled);
+    assert!(!settings.telemetry_is_enabled_with_environment(true));
+    assert!(settings.telemetry_is_enabled_with_environment(false));
+}
+
+#[test]
 fn provider_edit_replaces_a_removed_selected_model() {
     let mut settings = ChatSettings {
         model: "omniroute/removed/model".to_string(),
-        custom_models: vec![
-            "omniroute/removed/model".to_string(),
-            "openai/gpt-5.5".to_string(),
-        ],
         ..ChatSettings::default()
     };
     let provider = CustomProviderConfig {
@@ -34,10 +61,6 @@ fn provider_edit_replaces_a_removed_selected_model() {
     reconcile_custom_provider_models(&mut settings, &provider);
 
     assert_eq!(settings.model, "omniroute/replacement/model");
-    assert_eq!(
-        settings.custom_models,
-        vec!["openai/gpt-5.5", "omniroute/replacement/model"]
-    );
 }
 
 #[test]
