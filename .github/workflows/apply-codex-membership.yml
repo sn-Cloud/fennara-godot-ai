@@ -1,0 +1,91 @@
+name: Apply Codex membership migration
+
+on:
+  push:
+    branches:
+      - agent/restore-codex-membership-login
+    paths:
+      - .github/codex-membership.trigger
+
+permissions:
+  contents: write
+
+jobs:
+  migrate-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out migration branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: agent/restore-codex-membership-login
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Apply Codex integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/scripts/apply_codex_core.py
+          python .github/scripts/apply_codex_runtime.py
+          python .github/scripts/apply_codex_ui.py
+          python .github/scripts/apply_codex_docs.py
+
+      - name: Format Rust
+        shell: bash
+        run: cargo fmt --manifest-path local/Cargo.toml --all
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check ui/chat/app.js
+          node --check ui/chat/provider-popovers.js
+          node --check ui/chat/composer-actions.js
+          node --check godot_demo/addons/fennara/dist/app.js
+          node --check godot_demo/addons/fennara/dist/provider-popovers.js
+          node --check godot_demo/addons/fennara/dist/composer-actions.js
+
+      - name: Test Fennara daemon
+        shell: bash
+        run: cargo test --manifest-path local/Cargo.toml -p fennara-daemon
+
+      - name: Validate patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -f local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex.rs
+          test -f local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
+          grep -q 'account/login/start' local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
+          grep -q 'Codex (ChatGPT account)' README.md
+          grep -q 'codex/default' docs/providers.md
+
+      - name: Remove one-time migration files
+        shell: bash
+        run: |
+          rm -f .github/scripts/apply_codex_core.py
+          rm -f .github/scripts/apply_codex_runtime.py
+          rm -f .github/scripts/apply_codex_ui.py
+          rm -f .github/scripts/apply_codex_docs.py
+          rm -f .github/workflows/apply-codex-membership.yml
+          rm -f .github/codex-membership.trigger
+
+      - name: Commit tested migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(codex): restore ChatGPT account login on Fennara 0.4.0"
+          git push origin HEAD:agent/restore-codex-membership-login
