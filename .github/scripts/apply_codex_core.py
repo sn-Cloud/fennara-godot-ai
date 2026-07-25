@@ -128,8 +128,8 @@ replace_once(
 # Static Codex account model in the UI catalog.
 replace_once(
     'local/crates/fennara-daemon/src/runtime_daemon/chat/models.rs',
-    '    let mut models = Vec::new();\n',
-    '    let mut models = Vec::new();\n    if providers::codex_app_server::is_installed() {\n        models.push(codex_model_info());\n    }\n',
+    '        || has_nvidia_key;\n    let mut models = Vec::new();\n',
+    '        || has_nvidia_key;\n    let mut models = Vec::new();\n    if providers::codex_app_server::is_installed() {\n        models.push(codex_model_info());\n    }\n',
 )
 replace_once(
     'local/crates/fennara-daemon/src/runtime_daemon/chat/models.rs',
