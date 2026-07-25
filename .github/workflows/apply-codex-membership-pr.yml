@@ -87,7 +87,24 @@ jobs:
       - name: Format Rust
         if: steps.migration.outputs.required == 'true'
         shell: bash
-        run: cargo fmt --manifest-path local/Cargo.toml --all
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set +e
+          cargo fmt --manifest-path local/Cargo.toml --all > /tmp/codex-format.log 2>&1
+          status=$?
+          if [[ ${status} -ne 0 ]]; then
+            git reset --hard HEAD
+            cp /tmp/codex-format.log .github/codex-format-error.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/codex-format-error.txt
+            git commit -m "ci: record Codex migration format failure"
+            git push origin HEAD:"${HEAD_BRANCH}"
+            cat /tmp/codex-format.log
+            exit ${status}
+          fi
+          cat /tmp/codex-format.log
 
       - name: Check JavaScript syntax
         if: steps.migration.outputs.required == 'true'
@@ -144,6 +161,7 @@ jobs:
           rm -f .github/workflows/apply-codex-membership.yml
           rm -f .github/codex-membership.trigger
           rm -f .github/codex-migration-error.txt
+          rm -f .github/codex-format-error.txt
           rm -f .github/codex-build-error.txt
 
       - name: Commit tested migration
