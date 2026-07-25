@@ -59,3 +59,52 @@ replace_once(
     '        "get_project_status" => send_project_status(sender, request_id, state, bound_project).await,\n',
     '        "get_project_status" => send_project_status(sender, request_id, state, bound_project).await,\n        "codex_account_status" => {\n            match providers::codex_app_server::account_status().await {\n                Ok(status) => send_json(\n                    sender,\n                    json!({\n                        "type": "codex_account_status",\n                        "request_id": request_id,\n                        "status": status\n                    }),\n                )\n                .await,\n                Err(error) => send_error(sender, request_id, "codex_account_failed", &error).await,\n            }\n        }\n        "codex_login_start" => {\n            match providers::codex_app_server::start_login().await {\n                Ok(login) => send_json(\n                    sender,\n                    json!({\n                        "type": "codex_login_started",\n                        "request_id": request_id,\n                        "login": login\n                    }),\n                )\n                .await,\n                Err(error) => send_error(sender, request_id, "codex_login_failed", &error).await,\n            }\n        }\n        "codex_logout" => {\n            match providers::codex_app_server::logout().await {\n                Ok(status) => send_json(\n                    sender,\n                    json!({\n                        "type": "codex_account_status",\n                        "request_id": request_id,\n                        "status": status\n                    }),\n                )\n                .await,\n                Err(error) => send_error(sender, request_id, "codex_logout_failed", &error).await,\n            }\n        }\n',
 )
+
+
+# Add neutral defaults to existing request literals used by tests and helper paths.
+def add_request_defaults(path: Path) -> None:
+    lines = path.read_text(encoding='utf-8').splitlines(keepends=True)
+    output: list[str] = []
+    index = 0
+    changed = False
+    while index < len(lines):
+        line = lines[index]
+        target = None
+        if 'struct ChatRequest' not in line and 'ChatRequest {' in line:
+            target = 'ChatRequest'
+        elif 'struct LlmRequest' not in line and 'LlmRequest {' in line:
+            target = 'LlmRequest'
+        if target is None:
+            output.append(line)
+            index += 1
+            continue
+
+        block: list[str] = []
+        depth = 0
+        started = False
+        while index < len(lines):
+            current = lines[index]
+            block.append(current)
+            depth += current.count('{') - current.count('}')
+            if '{' in current:
+                started = True
+            index += 1
+            if started and depth == 0:
+                break
+
+        block_text = ''.join(block)
+        if 'cwd:' not in block_text and 'approval_mode:' not in block_text:
+            closing = block.pop()
+            indent = closing[: len(closing) - len(closing.lstrip())]
+            block.append(f'{indent}    cwd: None,\n')
+            block.append(f'{indent}    approval_mode: "ask".to_string(),\n')
+            block.append(closing)
+            changed = True
+        output.extend(block)
+
+    if changed:
+        path.write_text(''.join(output), encoding='utf-8', newline='\n')
+
+
+for rust_path in (ROOT / 'local/crates/fennara-daemon/src/runtime_daemon/chat').rglob('*.rs'):
+    add_request_defaults(rust_path)
