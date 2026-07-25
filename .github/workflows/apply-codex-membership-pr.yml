@@ -104,7 +104,24 @@ jobs:
       - name: Test Fennara daemon
         if: steps.migration.outputs.required == 'true'
         shell: bash
-        run: cargo test --manifest-path local/Cargo.toml -p fennara-daemon
+        env:
+          HEAD_BRANCH: ${{ github.head_ref }}
+        run: |
+          set +e
+          cargo test --manifest-path local/Cargo.toml -p fennara-daemon > /tmp/codex-build.log 2>&1
+          status=$?
+          if [[ ${status} -ne 0 ]]; then
+            git reset --hard HEAD
+            cp /tmp/codex-build.log .github/codex-build-error.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add .github/codex-build-error.txt
+            git commit -m "ci: record Codex migration build failure"
+            git push origin HEAD:"${HEAD_BRANCH}"
+            cat /tmp/codex-build.log
+            exit ${status}
+          fi
+          cat /tmp/codex-build.log
 
       - name: Validate patch
         if: steps.migration.outputs.required == 'true'
@@ -127,6 +144,7 @@ jobs:
           rm -f .github/workflows/apply-codex-membership.yml
           rm -f .github/codex-membership.trigger
           rm -f .github/codex-migration-error.txt
+          rm -f .github/codex-build-error.txt
 
       - name: Commit tested migration
         if: steps.migration.outputs.required == 'true'
