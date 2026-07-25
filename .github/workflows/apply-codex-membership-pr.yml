@@ -147,7 +147,7 @@ jobs:
           set -euo pipefail
           git diff --check
           grep -q 'account/login/start' local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
-          grep -q 'Codex (ChatGPT account)' README.md
+          grep -q 'codex/default' README.md
           grep -q 'codex/default' docs/providers.md
 
       - name: Remove one-time branch files
