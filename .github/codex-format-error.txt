@@ -1,0 +1,15 @@
+error: expected `;`, found `cwd`
+    --> /home/runner/work/fennara-godot-ai/fennara-godot-ai/local/crates/fennara-daemon/src/bin/../runtime_daemon/chat/providers/adapters/anthropic_compatible.rs:1665:10
+     |
+1665 |         }
+     |          ^ help: add `;` here
+1666 |         cwd: None,
+     |         --- unexpected token
+
+error: expected identifier, found `:`
+    --> /home/runner/work/fennara-godot-ai/fennara-godot-ai/local/crates/fennara-daemon/src/bin/../runtime_daemon/chat/providers/adapters/anthropic_compatible.rs:1666:12
+     |
+1666 |         cwd: None,
+     |            ^ expected identifier
+
+Error writing files: failed to resolve mod `anthropic_compatible`: cannot parse /home/runner/work/fennara-godot-ai/fennara-godot-ai/local/crates/fennara-daemon/src/bin/../runtime_daemon/chat/providers/adapters/anthropic_compatible.rs
