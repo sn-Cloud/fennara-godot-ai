@@ -9,18 +9,22 @@
 ## 当前状态
 
 > [!IMPORTANT]
-> 本仓库基于完整的 Fennara `0.4.0`，并恢复 Codex `app-server` 与 ChatGPT 会员账号登录。Fennara 原有 MCP、daemon、CLI、Godot 工具及全部 API Provider 均继续保留。
+> 本仓库以完整的 Fennara `0.4.0` 为基础，并在内置聊天中恢复了通过官方 Codex CLI 使用 ChatGPT 会员账号登录的能力。Fennara 原有 MCP、daemon、CLI、Godot 工具及全部 API Provider 均继续保留。
 
-Codex 会员登录使用本机安装的 OpenAI Codex CLI。OAuth 凭据由 Codex CLI 保存和刷新，本插件不读取或保存 ChatGPT Token。
+Codex 会员登录通过本机安装的 OpenAI Codex CLI 和 `codex app-server --stdio` 实现。OAuth 凭据、刷新令牌、账号状态及订阅权限均由 Codex CLI 管理；Fennara 不读取或保存 ChatGPT Token。
 
-此前基于 Godot MCP Native 重构的 Codex／Kimi 双后端方案，已经独立拆分到：
+此前基于 Godot MCP Native 重构的 Codex／Kimi 双后端方案，已独立拆分到：
 
 - [sn-Cloud/godot-ai-manager](https://github.com/sn-Cloud/godot-ai-manager)
 
-因此，本仓库不再包含以下内容：
+两个项目的定位不同：
+
+- 本仓库保留完整 Fennara，并增加 Codex ChatGPT 会员账号 Provider；
+- `godot-ai-manager` 使用独立的 Codex／Kimi 官方后端，并以 Godot MCP Native 作为 Godot MCP。
+
+因此，本仓库仍然不包含以下内容：
 
 - Godot MCP Native 集成；
-- Codex `app-server` 管理层；
 - Kimi ACP 管理层；
 - Kimi 会员设备码登录；
 - 以 Godot MCP Native 替换 Fennara MCP 的架构。
@@ -35,23 +39,39 @@ Codex 会员登录使用本机安装的 OpenAI Codex CLI。OAuth 凭据由 Codex
 | Anthropic、DeepSeek、OpenRouter、Moonshot AI、Kimi For Coding、MiniMax、NVIDIA 等 API Provider | 已支持 |
 | Ollama、LM Studio 本地模型 | 已支持 |
 | Codex、Claude、Cursor、Gemini、Antigravity 等外部 MCP 应用 | 已支持 |
-| ChatGPT／Codex Plus、Pro 等会员账号通过 Codex CLI 登录内置聊天 | 已恢复 |
+| ChatGPT／Codex Plus、Pro 等会员账号通过官方 Codex CLI 登录内置聊天 | 已恢复 |
 | Kimi 会员账号登录 | 不属于本仓库 |
 | Godot MCP Native | 不属于本仓库 |
 
 ### OpenAI 登录方式说明
 
-当前 Fennara 内置聊天连接 OpenAI 时使用 OpenAI API Key：
+本仓库同时支持两种彼此独立的 OpenAI 使用方式。
+
+#### OpenAI API Key
 
 ```text
 OPENAI_API_KEY
 ```
 
-OpenAI API Key Provider 与 Codex 会员账号 Provider 相互独立：
+对应模型格式：
 
-- `openai/<model>` 使用 `OPENAI_API_KEY`；
-- `codex/default` 使用 Codex CLI 保存的 ChatGPT 账号；
-- 外部 Codex 应用仍使用自己的账号和模型配置。
+```text
+openai/<model>
+```
+
+API 调用产生的费用由 OpenAI API 账户单独结算，与 ChatGPT Plus、Pro 等会员订阅无关。
+
+#### ChatGPT 会员账号
+
+对应模型格式：
+
+```text
+codex/default
+```
+
+该方式使用 Codex CLI 保存的 ChatGPT 账号，不需要把 OAuth Token 或 ChatGPT 凭据写入 Fennara。
+
+外部 Codex 应用仍使用其自身的账号、模型和权限配置，不会自动继承 Fennara 内置聊天的 Provider 设置。
 
 ## 项目定位
 
@@ -75,13 +95,24 @@ Fennara 为 AI 编程助手提供与 Godot 编辑器的实时连接，使 AI 不
 - Godot 4.5 或更高版本；
 - Windows x86_64、Linux x86_64 或 macOS arm64；
 - 使用外部 AI 应用时，需要支持 MCP 的客户端；
-- 使用内置聊天时，需要配置云端 Provider API Key，或启动 Ollama／LM Studio 本地服务。
+- 使用云端 API Provider 时，需要配置对应 API Key；
+- 使用 Ollama／LM Studio 时，需要启动本地模型服务；
+- 使用 ChatGPT 会员账号登录时，需要安装官方 Codex CLI，并确保 `codex --version` 可以正常执行。
 
 ## 安装
 
-当前 `main` 与上游 Fennara 0.4.0 保持一致，因此可以使用上游官方发行版。
+当前 `main` 基于上游 Fennara `0.4.0`，但已经加入本仓库自定义的 Codex ChatGPT 会员登录代码，因此不再与上游官方发行版完全一致。
 
-### 方式一：安装插件
+### 使用本仓库版本
+
+要使用 ChatGPT 会员账号登录功能，需要使用本仓库 `main` 分支源码进行构建和安装。
+
+> [!NOTE]
+> 本仓库目前没有声明上游官方安装脚本会生成或下载包含该功能的构建产物。在本仓库发布独立发行版前，不应把上游发行包视为包含 Codex 会员登录的版本。
+
+### 使用上游官方版本
+
+不需要 ChatGPT 会员登录时，可以使用上游 Fennara 官方发行版。
 
 打开 [Fennara 最新发行版](https://github.com/fennaraOfficial/fennara-godot-ai/releases/latest)，下载 `fennara-addon-latest.zip`，将其中的：
 
@@ -93,7 +124,7 @@ addons/fennara/
 
 启动项目后，在 Fennara 面板中点击 **Set Up Fennara**。
 
-### 方式二：使用 CLI
+也可以使用上游 CLI 安装脚本。
 
 Windows：
 
@@ -113,8 +144,8 @@ curl -fsSL https://raw.githubusercontent.com/fennaraOfficial/fennara-godot-ai/ma
 fennara install
 ```
 
-> [!NOTE]
-> 上述安装命令下载的是上游 Fennara 官方发行版，不包含本仓库新增的 Codex 会员登录。使用本功能需要从本仓库构建或等待本仓库独立发行版。
+> [!WARNING]
+> 上述发行版和安装脚本来自上游仓库，不包含本仓库新增的 Codex ChatGPT 会员登录功能。
 
 ## 配置内置聊天
 
@@ -126,6 +157,7 @@ Chat Settings > Chat > Open providers
 
 可选择：
 
+- Codex (ChatGPT account)；
 - OpenAI；
 - Anthropic；
 - OpenRouter；
@@ -139,71 +171,17 @@ Chat Settings > Chat > Open providers
 - Ollama；
 - LM Studio。
 
-完整说明见 [Provider 文档](docs/providers.md)。
+### 使用 ChatGPT 会员账号
 
-## 配置外部 MCP 应用
+1. 安装官方 Codex CLI。
+2. 在终端执行 `codex --version`，确认命令可用。
+3. 打开 `Chat Settings > Chat > Open providers`。
+4. 选择 **Codex (ChatGPT account)**。
+5. 在浏览器中完成 ChatGPT OAuth 登录。
+6. 选择模型 `codex/default`。
 
-在 Fennara 面板中打开：
+Fennara 会在本机启动 `codex app-server --stdio`，并读取账号状态和流式会话事件。OAuth Token 仍由 Codex CLI 保存和刷新。
 
-```text
-Chat Settings > MCP Apps
-```
+默认权限模式映射为 Codex `workspaceWrite`；在 Fennara 中选择 **Full access** 时，会映射为 Codex `dangerFullAccess`。
 
-选择对应应用并点击 **Set Up**。
-
-也可以使用命令行：
-
-```bash
-fennara mcp-setup --codex
-fennara mcp-setup --help
-```
-
-完整说明见 [MCP 配置文档](docs/mcp-setup.md)。
-
-## 更新
-
-关闭 Godot 后，在项目目录运行：
-
-```bash
-fennara update
-```
-
-也可以在 Fennara 面板显示 **Update** 时直接执行更新。
-
-## 隐私与遥测
-
-上游 Fennara 默认每天最多发送一次匿名活跃安装事件，内容包括随机安装 UUID、Fennara 和 Godot 版本、操作系统及 CPU 架构，不包含项目数据、路径、提示词、工具活动、日志、截图或账号信息。
-
-可通过以下任一方式关闭：
-
-```text
-Chat Settings > Chat > Anonymous telemetry
-FENNARA_DISABLE_TELEMETRY=true
-DO_NOT_TRACK=1
-```
-
-完整说明见 [匿名遥测文档](docs/telemetry.md)。
-
-## 与上游的关系
-
-- 上游项目：[fennaraOfficial/fennara-godot-ai](https://github.com/fennaraOfficial/fennara-godot-ai)
-- 本仓库当前基于并同步上游 Fennara 0.4.0；
-- Fennara 原始代码、品牌和社区资源归上游项目及其贡献者；
-- 本仓库未来新增的扩展会在 README 和提交记录中单独标明；
-- 不会将 Godot MCP Native 或其他第三方项目声明为本仓库自有实现。
-
-## 文档
-
-| 文档 | 内容 |
-| --- | --- |
-| [文档索引](docs/README.md) | 全部使用和开发文档 |
-| [安装与故障排除](docs/setup.md) | 安装、更新和常见问题 |
-| [Provider](docs/providers.md) | 内置聊天模型与 API Key |
-| [MCP 配置](docs/mcp-setup.md) | 外部 AI 应用连接方式 |
-| [工具说明](docs/tools.md) | Godot 编辑器反馈能力 |
-| [匿名遥测](docs/telemetry.md) | 收集内容和关闭方式 |
-| [贡献指南](CONTRIBUTING.md) | 开发和 Pull Request 规范 |
-
-## 许可证
-
-本项目沿用 MIT License，详见 [LICENSE.md](LICENSE.md)。
+Codex 会话仍可通过现有 Fennara MCP 使用 Godot 编辑器和运行时工具，无需安装 Godot MCP Native。
