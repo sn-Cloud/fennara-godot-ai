@@ -498,6 +498,8 @@ where
             &current_assistant.id,
             state,
             &chat_id,
+            scope.project_path.clone(),
+            settings.approval_mode.as_str().to_string(),
             current_trace.clone(),
         )
         .await;
@@ -1297,6 +1299,8 @@ fn estimate_provider_input_tokens(
             messages: provider_messages.to_vec(),
             tools: tools::definitions(),
             max_output_tokens: None,
+            cwd: None,
+            approval_mode: "ask".to_string(),
         },
     )
     .ok()
@@ -1358,6 +1362,8 @@ async fn try_create_context_summary(
             messages: summary_messages.clone(),
             tools: Vec::new(),
             max_output_tokens: Some(summary_output_max_tokens),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         },
     )
     .ok()
@@ -1381,6 +1387,8 @@ async fn try_create_context_summary(
             messages: summary_messages,
             tools: Vec::new(),
             max_output_tokens: Some(summary_output_max_tokens),
+            cwd: None,
+            approval_mode: "ask".to_string(),
         },
         None,
         move |item| {

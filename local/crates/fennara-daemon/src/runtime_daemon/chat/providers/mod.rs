@@ -4,6 +4,8 @@ mod anthropic_providers;
 mod capability_check;
 mod catalog;
 pub(crate) mod catalog_cache;
+mod codex;
+pub(crate) mod codex_app_server;
 mod context;
 pub(crate) mod custom;
 mod deepseek;
@@ -119,6 +121,7 @@ pub(crate) fn settings_from_chat(settings: &ChatSettings) -> ProviderSettings {
 
 pub(crate) fn public_provider_registry(settings: &ChatSettings) -> Vec<PublicProvider> {
     let mut providers = vec![
+        account_provider(codex::provider_definition()),
         api_key_provider(
             openai::provider_definition(None),
             "cloud",
@@ -225,6 +228,23 @@ fn minimax_cn_alias_has_api_key(provider_id: &str) -> bool {
         && auth::has_api_key(types::ProviderId::MINIMAX_CN)
 }
 
+fn account_provider(provider: types::ProviderDefinition) -> PublicProvider {
+    let provider_id = provider.id.to_string();
+    PublicProvider {
+        id: provider_id.clone(),
+        name: provider.name,
+        kind: "agent",
+        auth: PublicProviderAuth {
+            kind: "account",
+            env: None,
+        },
+        connected: codex_app_server::cached_account_status().connected,
+        model_prefix: format!("{provider_id}/"),
+        setup: None,
+        custom: None,
+    }
+}
+
 fn api_key_provider(
     provider: types::ProviderDefinition,
     kind: &'static str,
@@ -298,6 +318,21 @@ fn local_provider(
 }
 
 pub(crate) fn missing_auth_for_model(settings: &ChatSettings, model: &str) -> Option<LlmError> {
+    if has_provider_prefix(model.trim(), types::ProviderId::CODEX) {
+        if !codex_app_server::is_installed() {
+            return Some(LlmError::Auth {
+                provider: types::ProviderId::CODEX.to_string(),
+                message: "Install the Codex CLI before using ChatGPT account login.".to_string(),
+            });
+        }
+        if !codex_app_server::cached_account_status().connected {
+            return Some(LlmError::Auth {
+                provider: types::ProviderId::CODEX.to_string(),
+                message: "Sign in to Codex with your ChatGPT account first.".to_string(),
+            });
+        }
+        return None;
+    }
     if custom::split_model_selection(&settings.custom_providers, model).is_some() {
         return None;
     }
@@ -358,6 +393,7 @@ fn auth_provider_for_model(model: &str) -> Option<(&'static str, &'static str, &
 fn selected_provider_for_model(model: &str) -> Option<&'static str> {
     let clean = model.trim();
     [
+        types::ProviderId::CODEX,
         types::ProviderId::OPENAI,
         types::ProviderId::ANTHROPIC,
         types::ProviderId::OPENROUTER,
@@ -452,6 +488,36 @@ where
             })
             .await?
         }
+        types::AdapterKind::CodexAppServer => {
+            codex_app_server::stream_chat(&llm_request, {
+                let accumulator = Arc::clone(&accumulator);
+                let on_item = Arc::clone(&on_item);
+                move |event| {
+                    let accumulator = Arc::clone(&accumulator);
+                    let on_item = Arc::clone(&on_item);
+                    async move {
+                        let items = {
+                            let mut accumulator = accumulator.lock().await;
+                            accumulator.items_for_event(event)?
+                        };
+                        for item in items {
+                            let mut on_item = on_item.lock().await;
+                            if !on_item(item).await? {
+                                return Ok(false);
+                            }
+                        }
+                        Ok(true)
+                    }
+                }
+            })
+            .await?;
+            ChatCompletion {
+                content: String::new(),
+                tool_calls: Vec::new(),
+                finish_reason: FinishReason::Stop,
+                tool_call_observation: ToolCallObservation::none(),
+            }
+        }
     };
 
     let accumulator = accumulator.lock().await;
@@ -499,6 +565,8 @@ pub(crate) fn model_context_estimate(
             messages: vec![json!({ "role": "user", "content": "" })],
             tools: Vec::new(),
             max_output_tokens: None,
+            cwd: None,
+            approval_mode: "ask".to_string(),
         },
     )
 }
@@ -514,6 +582,8 @@ pub(crate) fn selected_model_supports_image_input(
         messages: vec![json!({ "role": "user", "content": "" })],
         tools: Vec::new(),
         max_output_tokens: None,
+        cwd: None,
+        approval_mode: "ask".to_string(),
     };
     LlmRequest::from_chat(settings, &request)
         .map(|request| {

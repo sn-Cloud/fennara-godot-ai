@@ -10,6 +10,7 @@ pub(crate) struct ProviderId(String);
 
 impl ProviderId {
     pub(crate) const OPENAI: &'static str = "openai";
+    pub(crate) const CODEX: &'static str = "codex";
     pub(crate) const ANTHROPIC: &'static str = "anthropic";
     pub(crate) const OPENROUTER: &'static str = "openrouter";
     pub(crate) const OLLAMA: &'static str = "ollama";
@@ -121,6 +122,7 @@ impl ModelRef {
 pub(crate) enum AdapterKind {
     OpenAiCompatibleChat,
     AnthropicCompatibleMessages,
+    CodexAppServer,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -304,6 +306,8 @@ pub(crate) struct ChatRequest {
     pub(crate) messages: Vec<Value>,
     pub(crate) tools: Vec<Value>,
     pub(crate) max_output_tokens: Option<u32>,
+    pub(crate) cwd: Option<String>,
+    pub(crate) approval_mode: String,
 }
 
 #[derive(Clone, Debug)]

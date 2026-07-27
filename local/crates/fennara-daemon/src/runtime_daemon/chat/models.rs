@@ -156,6 +156,9 @@ pub(crate) async fn list_models(settings: &ChatSettings, refresh_local: bool) ->
         || has_minimax_cn_coding_plan_key
         || has_nvidia_key;
     let mut models = Vec::new();
+    if providers::codex_app_server::is_installed() {
+        models.push(codex_model_info());
+    }
     if has_saved_openrouter_key {
         if let Ok(cached_catalog) = &cached_catalog {
             append_openrouter_catalog_models(
@@ -390,7 +393,8 @@ pub(crate) async fn list_models(settings: &ChatSettings, refresh_local: bool) ->
         .values()
         .any(|status| matches!(status.state, "ready" | "empty"));
     let custom_live = !settings.custom_providers.is_empty();
-    let live = openrouter_error.is_none() || ollama_live || local_live || custom_live;
+    let codex_live = providers::codex_app_server::is_installed();
+    let live = openrouter_error.is_none() || ollama_live || local_live || custom_live || codex_live;
     ModelCatalog {
         models,
         recommended_ids,
@@ -440,6 +444,39 @@ fn catalog_status(
             openrouter_model_count: 0,
             last_error: Some(error.clone()),
         },
+    }
+}
+
+fn codex_model_info() -> ModelInfo {
+    ModelInfo {
+        id: "codex/default".to_string(),
+        display_name: "Codex account default".to_string(),
+        provider_id: ProviderId::CODEX.to_string(),
+        provider: "Codex (ChatGPT account)".to_string(),
+        source: "account",
+        recommended: true,
+        custom: false,
+        verified: true,
+        latest_alias: true,
+        canonical_slug: Some("default".to_string()),
+        context_length: None,
+        max_output_tokens: None,
+        input_cost_per_million: None,
+        output_cost_per_million: None,
+        cache_read_cost_per_million: None,
+        cache_write_cost_per_million: None,
+        tokens_per_second: None,
+        modalities: vec!["in:text".to_string(), "out:text".to_string()],
+        supports_tools: true,
+        supports_reasoning: true,
+        supported_reasoning_efforts: vec![
+            "low".to_string(),
+            "medium".to_string(),
+            "high".to_string(),
+        ],
+        description: Some(
+            "Uses the installed Codex CLI and its ChatGPT account authentication.".to_string(),
+        ),
     }
 }
 

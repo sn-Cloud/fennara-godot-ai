@@ -9,9 +9,9 @@
 ## 当前状态
 
 > [!IMPORTANT]
-> 当前 `main` 分支已同步上游 Fennara `0.4.0`。现有代码保留完整的 Fennara 架构和功能，当前并未在内置聊天中实现 ChatGPT／Codex 会员账号登录。
+> 本仓库基于完整的 Fennara `0.4.0`，并恢复 Codex `app-server` 与 ChatGPT 会员账号登录。Fennara 原有 MCP、daemon、CLI、Godot 工具及全部 API Provider 均继续保留。
 
-本仓库最初计划在完整保留 Fennara 的基础上，增加 OpenAI 官方会员登录能力。该目标仍属于后续扩展方向，不能与当前已经实现的功能混淆。
+Codex 会员登录使用本机安装的 OpenAI Codex CLI。OAuth 凭据由 Codex CLI 保存和刷新，本插件不读取或保存 ChatGPT Token。
 
 此前基于 Godot MCP Native 重构的 Codex／Kimi 双后端方案，已经独立拆分到：
 
@@ -35,7 +35,7 @@
 | Anthropic、DeepSeek、OpenRouter、Moonshot AI、Kimi For Coding、MiniMax、NVIDIA 等 API Provider | 已支持 |
 | Ollama、LM Studio 本地模型 | 已支持 |
 | Codex、Claude、Cursor、Gemini、Antigravity 等外部 MCP 应用 | 已支持 |
-| ChatGPT／Codex Plus、Pro 等会员账号直接登录内置聊天 | **尚未实现** |
+| ChatGPT／Codex Plus、Pro 等会员账号通过 Codex CLI 登录内置聊天 | 已恢复 |
 | Kimi 会员账号登录 | 不属于本仓库 |
 | Godot MCP Native | 不属于本仓库 |
 
@@ -47,9 +47,11 @@
 OPENAI_API_KEY
 ```
 
-ChatGPT Plus、Pro 等会员订阅与 OpenAI API 是不同的认证和计费体系，会员订阅目前不能直接代替 Fennara 内置聊天所需的 API Key。
+OpenAI API Key Provider 与 Codex 会员账号 Provider 相互独立：
 
-外部 Codex 应用通过 MCP 使用 Fennara 时，Codex 的账号登录和模型设置由 Codex 自身负责，不等于 Fennara 内置聊天已经支持会员登录。
+- `openai/<model>` 使用 `OPENAI_API_KEY`；
+- `codex/default` 使用 Codex CLI 保存的 ChatGPT 账号；
+- 外部 Codex 应用仍使用自己的账号和模型配置。
 
 ## 项目定位
 
@@ -112,7 +114,7 @@ fennara install
 ```
 
 > [!NOTE]
-> 上述安装命令下载的是上游 Fennara 官方发行版。当前本仓库尚未发布包含自定义会员登录功能的独立发行版。
+> 上述安装命令下载的是上游 Fennara 官方发行版，不包含本仓库新增的 Codex 会员登录。使用本功能需要从本仓库构建或等待本仓库独立发行版。
 
 ## 配置内置聊天
 

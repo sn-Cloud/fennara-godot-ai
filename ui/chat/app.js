@@ -185,6 +185,7 @@
   let activeTurnCost = 0;
   let latestPromptTokens = 0;
   let projectStatusTimer = 0;
+  let codexLoginPollTimer = 0;
   let canRevert = false;
   let modelPicker = null;
   let providerPopovers = null;
@@ -255,6 +256,7 @@
       requestProjectStatus();
       startProjectStatusPolling();
       requestModelList();
+      requestCodexAccountStatus();
       flushPendingSettings();
     },
     onMessage(message) {
@@ -402,6 +404,7 @@
       providerStatusLabel,
       providerUsesBaseUrlSetup,
       chooseProvider,
+      manageAccountProvider,
     },
     settings: {
       defaultOllamaBaseUrl: DEFAULT_OLLAMA_BASE_URL,
@@ -490,6 +493,7 @@
       },
       cleanReasoningEffort,
       providerRequiresApiKey,
+      providerRequiresAccount,
       providerConnected,
       openProviderPicker,
       openModelPicker,
@@ -891,6 +895,7 @@
       model_prefix: String(provider?.model_prefix || (id ? `${id}/` : "")),
       setup,
       custom: provider?.custom || null,
+      account: provider?.account || null,
     };
   }
 
@@ -1104,11 +1109,29 @@
     if (provider.auth?.type === "api_key") {
       return provider.connected ? "Connected" : "Not connected";
     }
+    if (provider.auth?.type === "account") {
+      const account = provider.account || {};
+      if (account.installed === false) {
+        return "Codex CLI not installed";
+      }
+      if (account.signing_in) {
+        return "Waiting for browser login";
+      }
+      if (provider.connected) {
+        const plan = String(account.plan_type || "").trim();
+        return plan ? `Connected · ${plan}` : "Connected";
+      }
+      return "Sign in with ChatGPT";
+    }
     return provider.connected ? "Connected" : "Available";
   }
 
   function providerRequiresApiKey(providerId) {
     return providerMetadata.get(providerId)?.auth?.type === "api_key";
+  }
+
+  function providerRequiresAccount(providerId) {
+    return providerMetadata.get(providerId)?.auth?.type === "account";
   }
 
   function providerConnected(providerId) {
@@ -1203,7 +1226,7 @@
     if (currentProviderIsLocal()) {
       return localModelAvailable(currentModel);
     }
-    if (providerRequiresApiKey(currentProvider)) {
+    if (providerRequiresApiKey(currentProvider) || providerRequiresAccount(currentProvider)) {
       return providerConnected(currentProvider);
     }
     return true;
@@ -1324,6 +1347,74 @@
       return 0;
     }
     return Math.floor(parsed);
+  }
+
+  function requestCodexAccountStatus() {
+    return send({
+      type: "codex_account_status",
+      request_id: nextRequestId("codex-account-status"),
+    });
+  }
+
+  function stopCodexLoginPolling() {
+    window.clearInterval(codexLoginPollTimer);
+    codexLoginPollTimer = 0;
+  }
+
+  function startCodexLoginPolling() {
+    stopCodexLoginPolling();
+    codexLoginPollTimer = window.setInterval(requestCodexAccountStatus, 1500);
+  }
+
+  function applyCodexAccountStatus(status) {
+    const next = status || {};
+    let changed = false;
+    providerRegistry = providerRegistry.map((provider) => {
+      if (provider.id !== "codex") {
+        return provider;
+      }
+      changed = provider.connected !== Boolean(next.connected) || provider.account !== next;
+      return { ...provider, connected: Boolean(next.connected), account: next };
+    });
+    if (changed) {
+      providerMetadata = new Map(providerRegistry.map((provider) => [provider.id, provider]));
+      updateProviderUi();
+      updateModelUi();
+      modelPicker?.applyCatalog({
+        ...(lastModelCatalog || {}),
+        providers: providerRegistry,
+      });
+    }
+    if (next.connected) {
+      stopCodexLoginPolling();
+    } else if (next.error && !next.signing_in) {
+      stopCodexLoginPolling();
+    }
+  }
+
+  function manageAccountProvider(provider) {
+    if (provider.id !== "codex") {
+      chooseProvider(provider.id);
+      return;
+    }
+    if (!provider.connected) {
+      appendSystem("Starting Codex ChatGPT login...");
+      send({
+        type: "codex_login_start",
+        request_id: nextRequestId("codex-login-start"),
+      });
+      return;
+    }
+    if (currentProvider === provider.id) {
+      if (window.confirm("Sign out of the Codex ChatGPT account?")) {
+        send({
+          type: "codex_logout",
+          request_id: nextRequestId("codex-logout"),
+        });
+      }
+      return;
+    }
+    chooseProvider(provider.id);
   }
 
   function chooseProvider(provider) {
@@ -1481,6 +1572,37 @@
       } else {
         markSettingsClean();
         clearSystemStatus();
+      }
+      return;
+    }
+    if (message.type === "codex_login_started") {
+      const authUrl = String(message.login?.auth_url || "");
+      if (authUrl) {
+        window.open(authUrl, "_blank", "noopener,noreferrer");
+        appendSystem(`Complete Codex login in your browser: ${authUrl}`);
+      } else {
+        appendSystem("Codex did not return a browser login URL.");
+      }
+      startCodexLoginPolling();
+      requestCodexAccountStatus();
+      return;
+    }
+    if (message.type === "codex_account_status") {
+      const wasConnected = providerConnected("codex");
+      applyCodexAccountStatus(message.status);
+      if (message.status?.connected && !wasConnected) {
+        currentProvider = "codex";
+        if (!currentModel || providerFromModel(currentModel) !== "codex") {
+          currentModel = "codex/default";
+        }
+        updateProviderUi();
+        updateModelUi();
+        saveCurrentChatSettings();
+        requestModelList({ refreshLocal: false });
+        appendSystem("Codex ChatGPT account connected.");
+        window.setTimeout(clearSystemStatus, 2200);
+      } else if (message.status?.error && !message.status?.signing_in) {
+        appendSystem(message.status.error);
       }
       return;
     }
