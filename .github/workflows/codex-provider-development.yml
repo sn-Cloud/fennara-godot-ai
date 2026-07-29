@@ -1,0 +1,58 @@
+name: Codex Provider Development
+
+on:
+  push:
+    branches:
+      - feature/codex-embedded-provider
+    paths:
+      - ".github/codex-provider-phase1.trigger"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: codex-provider-development-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  apply-phase-one:
+    if: ${{ hashFiles('.github/codex-provider-phase1.trigger') != '' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout development branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/codex-embedded-provider
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Apply phase-one architecture changes
+        run: python .github/scripts/apply_codex_provider_phase1.py
+
+      - name: Format Rust
+        working-directory: local
+        run: cargo fmt --all -- --check
+
+      - name: Test daemon
+        working-directory: local
+        run: cargo test --locked -p fennara-daemon
+
+      - name: Commit verified changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(codex): persist and resume provider threads"
+          git push origin HEAD:feature/codex-embedded-provider
