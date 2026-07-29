@@ -1,0 +1,78 @@
+name: Apply Codex Provider Development
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/codex-provider-development.trigger"
+
+permissions:
+  contents: write
+
+env:
+  FEATURE_BRANCH: feature/codex-embedded-provider
+
+jobs:
+  apply-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FEATURE_BRANCH }}
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Apply phase-one patch
+        run: python .github/scripts/apply_codex_provider_phase1.py
+
+      - name: Format Rust
+        working-directory: local
+        run: cargo fmt --all
+
+      - name: Test daemon
+        working-directory: local
+        run: cargo test --locked -p fennara-daemon
+
+      - name: Remove temporary feature-branch migration files
+        shell: bash
+        run: |
+          rm -f .github/scripts/apply_codex_provider_phase1.py
+          rm -f .github/workflows/codex-provider-development.yml
+          rm -f .github/codex-provider-phase1.trigger
+
+      - name: Commit verified feature changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat(codex): persist and resume provider threads"
+          git push origin HEAD:${FEATURE_BRANCH}
+
+      - name: Checkout main for cleanup
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: cleanup-main
+          fetch-depth: 0
+
+      - name: Remove one-time main runner
+        working-directory: cleanup-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f .github/workflows/apply-codex-provider-development.yml
+          rm -f .github/codex-provider-development.trigger
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "chore: remove one-time Codex provider runner"
+          git push origin HEAD:main
