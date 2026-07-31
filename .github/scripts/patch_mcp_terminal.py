@@ -1,2 +1,0 @@
-from pathlib import Path
-p=Path('local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs');s=p.read_text();m='fn item_status_message(item: Option<&Value>, completed: bool) -> Option<String> {\n';b='fn mcp_status_is_terminal(status: &str) -> bool { matches!(status, "completed" | "failed" | "timed_out" | "cancelled") }\n\n';p.write_text(s if 'fn mcp_status_is_terminal' in s else s.replace(m,b+m,1),newline='\n')

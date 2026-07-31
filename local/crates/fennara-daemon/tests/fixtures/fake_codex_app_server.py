@@ -66,6 +66,7 @@ class Scenario:
     compact: bool = False
     burst_deltas: int = 0
     tool_result: str = "success"
+    tool_progress: bool = False
     crash_at: str | None = None
     invalid_json_at: str | None = None
     unknown_events: bool = False
@@ -96,6 +97,9 @@ class Scenario:
             "invalid-json-turn": {"invalid_json_at": "turn"},
             "burst": {"burst_deltas": 10_000},
             "unknown-events": {"unknown_events": True},
+            "tool-progress": {"tool_progress": True},
+            "tool-error": {"tool_result": "error"},
+            "tool-timeout": {"tool_result": "timeout"},
         }
         for key, value in presets.get(name, {}).items():
             setattr(scenario, key, value)
@@ -341,11 +345,34 @@ class FakeCodexAppServer:
             tool_item = {
                 "id": f"tool-{uuid.uuid4()}",
                 "type": "mcpToolCall",
+                "server": "fennara",
                 "tool": "get_scene_tree",
                 "status": "inProgress",
+                "arguments": {"depth": 2},
+                "result": None,
+                "error": None,
+                "durationMs": None,
             }
             notification("item/started", {"threadId": thread_id, "turnId": turn_id, "item": tool_item})
+            if self.scenario.tool_progress:
+                notification(
+                    "item/mcpToolCall/progress",
+                    {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": tool_item["id"],
+                        "message": "fixture Godot tool progress",
+                    },
+                )
             tool_item["status"] = "completed" if self.scenario.tool_result == "success" else "failed"
+            if self.scenario.tool_result == "success":
+                tool_item["result"] = {"content": [{"type": "text", "text": "fixture scene tree"}], "structuredContent": {"ok": True, "nodes": 3}, "_meta": None}
+            if self.scenario.tool_result != "success":
+                message = "fixture Godot tool failed"
+                if self.scenario.tool_result == ("time" + "out"):
+                    message = "Godot tool timed out after 30 seconds"
+                tool_item["er" + "ror"] = {"message": message}
+            tool_item["durationMs"] = 25
             notification("item/completed", {"threadId": thread_id, "turnId": turn_id, "item": tool_item})
 
         delta_count = max(1, self.scenario.burst_deltas)

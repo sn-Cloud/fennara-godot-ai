@@ -333,6 +333,13 @@ pub(crate) enum StreamItem {
         arguments: String,
         message: String,
     },
+    ExternalTool {
+        id: String,
+        name: String,
+        arguments: String,
+        content: String,
+        status: String,
+    },
     Status {
         message: String,
     },

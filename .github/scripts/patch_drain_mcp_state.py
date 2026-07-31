@@ -1,2 +1,0 @@
-from pathlib import Path
-p=Path('local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server/integration_tests.rs');s=p.read_text();a='        let mut events = TurnEvents::default();\n        while !events.completed {';b='        let mut events = TurnEvents::default();\n        let mut mcp_items: HashMap<String, McpItemState> = HashMap::new();\n        while !events.completed {';p.write_text(s if 'let mut mcp_items:' in s else s.replace(a,b,1),newline='\n')

@@ -1,5 +1,5 @@
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
     process::Stdio,
     sync::{Arc, Mutex, OnceLock},
     time::Duration,
@@ -35,6 +35,8 @@ const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const STDERR_LINE_LIMIT: usize = 40;
+const MCP_ARGUMENT_LIMIT: usize = 8 * 1024;
+const MCP_CONTENT_LIMIT: usize = 32 * 1024;
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct CodexAccountStatus {
@@ -61,6 +63,12 @@ static ACTIVE_LOGIN: OnceLock<Mutex<Option<ActiveCodexLogin>>> = OnceLock::new()
 struct ActiveCodexLogin {
     login_id: String,
     cancel: oneshot::Sender<()>,
+}
+
+#[derive(Clone, Debug)]
+struct McpItemState {
+    name: String,
+    arguments: String,
 }
 
 fn account_status_cache() -> &'static Mutex<CodexAccountStatus> {
@@ -411,6 +419,7 @@ where
 
     let mut emitted_text = false;
     let mut latest_usage: Option<Usage> = None;
+    let mut mcp_items: HashMap<String, McpItemState> = HashMap::new();
     loop {
         let message = connection.read_message().await?;
         if connection.respond_to_server_request(&message).await? {
@@ -459,8 +468,13 @@ where
                 }
             }
             "item/started" => {
-                if let Some(status) = item_status_message(params.get("item"), false) {
-                    if !on_event(StreamEvent::Status { message: status }).await? {
+                let event =
+                    mcp_lifecycle_event(params.get("item"), false, &mut mcp_items).or_else(|| {
+                        item_status_message(params.get("item"), false)
+                            .map(|message| StreamEvent::Status { message })
+                    });
+                if let Some(event) = event {
+                    if !on_event(event).await? {
                         connection.interrupt_turn(&thread_id).await;
                         connection.shutdown().await;
                         return Ok(());
@@ -468,8 +482,22 @@ where
                 }
             }
             "item/completed" => {
-                if let Some(status) = item_status_message(params.get("item"), true) {
-                    if !on_event(StreamEvent::Status { message: status }).await? {
+                let event =
+                    mcp_lifecycle_event(params.get("item"), true, &mut mcp_items).or_else(|| {
+                        item_status_message(params.get("item"), true)
+                            .map(|message| StreamEvent::Status { message })
+                    });
+                if let Some(event) = event {
+                    if !on_event(event).await? {
+                        connection.interrupt_turn(&thread_id).await;
+                        connection.shutdown().await;
+                        return Ok(());
+                    }
+                }
+            }
+            "item/mcpToolCall/progress" => {
+                if let Some(event) = mcp_progress_event(&params, &mcp_items) {
+                    if !on_event(event).await? {
                         connection.interrupt_turn(&thread_id).await;
                         connection.shutdown().await;
                         return Ok(());
@@ -726,6 +754,193 @@ fn message_content(value: Option<&Value>) -> String {
         Some(other) => other.to_string(),
         None => String::new(),
     }
+}
+
+fn mcp_lifecycle_event(
+    item: Option<&Value>,
+    completed: bool,
+    states: &mut HashMap<String, McpItemState>,
+) -> Option<StreamEvent> {
+    let item = item?;
+    if item.get("type").and_then(Value::as_str) != Some("mcpToolCall") {
+        return None;
+    }
+    let id = clean_json_string(item.get("id"))?;
+    let previous = states.get(&id).cloned();
+    let server = clean_json_string(item.get("server"));
+    let tool = clean_json_string(item.get("tool")).or_else(|| clean_json_string(item.get("name")));
+    let name = match (server, tool) {
+        (Some(server), Some(tool)) => format!("{server} · {tool}"),
+        (_, Some(tool)) => tool,
+        _ => previous
+            .as_ref()
+            .map(|state| state.name.clone())
+            .unwrap_or_else(|| "MCP tool".to_string()),
+    };
+    let arguments = item
+        .get("arguments")
+        .map(format_json)
+        .or_else(|| previous.as_ref().map(|state| state.arguments.clone()))
+        .unwrap_or_else(|| "{}".to_string());
+    let arguments = truncate_text(&arguments, MCP_ARGUMENT_LIMIT);
+    let status = mcp_status(item, completed);
+    let content = truncate_text(&mcp_content(item, &status), MCP_CONTENT_LIMIT);
+    if mcp_status_is_terminal(&status) {
+        states.remove(&id);
+    } else {
+        states.insert(
+            id.clone(),
+            McpItemState {
+                name: name.clone(),
+                arguments: arguments.clone(),
+            },
+        );
+    }
+    Some(StreamEvent::ExternalToolActivity {
+        id,
+        name,
+        arguments,
+        content,
+        status,
+    })
+}
+
+fn mcp_progress_event(
+    params: &Value,
+    states: &HashMap<String, McpItemState>,
+) -> Option<StreamEvent> {
+    let id = clean_json_string(params.get("itemId"))?;
+    let state = states.get(&id)?;
+    let content = clean_json_string(params.get("message"))?;
+    Some(StreamEvent::ExternalToolActivity {
+        id,
+        name: state.name.clone(),
+        arguments: state.arguments.clone(),
+        content: truncate_text(&content, MCP_CONTENT_LIMIT),
+        status: "running".to_string(),
+    })
+}
+
+fn mcp_status(item: &Value, completed: bool) -> String {
+    match item
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "inProgress" => "running".to_string(),
+        "completed" => "completed".to_string(),
+        "failed" => mcp_failure_status(item),
+        _ if completed => "completed".to_string(),
+        _ => "running".to_string(),
+    }
+}
+
+fn mcp_failure_status(item: &Value) -> String {
+    let message = item
+        .pointer("/error/message")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if message.contains("timed out") || message.contains("timeout") {
+        "timed_out".to_string()
+    } else if message.contains("cancel") || message.contains("interrupt") {
+        "cancelled".to_string()
+    } else {
+        "failed".to_string()
+    }
+}
+
+fn mcp_status_is_terminal(status: &str) -> bool {
+    matches!(status, "completed" | "failed" | "timed_out" | "cancelled")
+}
+
+fn mcp_content(item: &Value, status: &str) -> String {
+    if let Some(message) = item.pointer("/error/message").and_then(Value::as_str) {
+        return message.to_string();
+    }
+    let Some(result) = item.get("result").filter(|value| !value.is_null()) else {
+        return if status == "running" {
+            "Running through Codex app-server and the configured Fennara MCP server.".to_string()
+        } else {
+            String::new()
+        };
+    };
+    if let Some(value) = result
+        .get("structuredContent")
+        .filter(|value| !value.is_null())
+    {
+        return format!(
+            "```json
+{}
+```",
+            format_json(value)
+        );
+    }
+    result
+        .get("content")
+        .and_then(Value::as_array)
+        .map(|parts| {
+            parts
+                .iter()
+                .filter_map(mcp_content_part)
+                .collect::<Vec<_>>()
+                .join(
+                    "
+
+",
+                )
+        })
+        .unwrap_or_else(|| format_json(result))
+}
+
+fn mcp_content_part(part: &Value) -> Option<String> {
+    if let Some(text) = part.get("text").and_then(Value::as_str) {
+        return Some(text.to_string());
+    }
+    if part.get("type").and_then(Value::as_str) == Some("image") {
+        let mime = part
+            .get("mimeType")
+            .or_else(|| part.get("mime_type"))
+            .and_then(Value::as_str)
+            .unwrap_or("image");
+        return Some(format!("Image result ({mime})"));
+    }
+    (!part.is_null()).then(|| {
+        format!(
+            "```json
+{}
+```",
+            format_json(part)
+        )
+    })
+}
+
+fn clean_json_string(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn format_json(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        _ => serde_json::to_string_pretty(value).unwrap_or_else(|_| value.to_string()),
+    }
+}
+
+fn truncate_text(value: &str, limit: usize) -> String {
+    if value.chars().count() <= limit {
+        return value.to_string();
+    }
+    let mut output = value.chars().take(limit).collect::<String>();
+    output.push_str(
+        "
+
+[Output truncated by Fennara]",
+    );
+    output
 }
 
 fn item_status_message(item: Option<&Value>, completed: bool) -> Option<String> {
