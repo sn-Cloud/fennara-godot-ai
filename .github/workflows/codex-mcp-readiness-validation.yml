@@ -25,25 +25,24 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Apply MCP readiness integration
-        run: |
-          python .github/scripts/apply_codex_mcp_readiness.py
-          python .github/scripts/fix_codex_mcp_readiness_compile.py
-
-      - name: Run workspace tests without failure email
+      - name: Apply, format, and test without failure email
         id: tests
         shell: bash
         run: |
           set +e
-          cargo fmt --manifest-path local/Cargo.toml --all
-          cargo test --manifest-path local/Cargo.toml --workspace --locked 2>&1 | tee /tmp/codex-mcp-readiness.log
+          {
+            python .github/scripts/apply_codex_mcp_readiness.py &&
+            python .github/scripts/fix_codex_mcp_readiness_compile.py &&
+            cargo fmt --manifest-path local/Cargo.toml --all &&
+            cargo test --manifest-path local/Cargo.toml --workspace --locked
+          } 2>&1 | tee /tmp/codex-mcp-readiness.log
           code=${PIPESTATUS[0]}
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           if [ "$code" -eq 0 ]; then
             echo "CODEX_MCP_READINESS=PASS"
           else
             echo "CODEX_MCP_READINESS=FAIL exit_code=$code"
-            echo "::warning title=Codex MCP readiness tests failed::The full log is being written to the development branch without marking this workflow failed."
+            echo "::warning title=Codex MCP readiness validation failed::The full log is being written to the development branch without marking this workflow failed."
           fi
           exit 0
 
