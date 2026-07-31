@@ -37,14 +37,22 @@ jobs:
 
           python3 - <<'PY' >> "$LOG" 2>&1
           from pathlib import Path
+          from textwrap import dedent
 
           workflow = Path(".github/workflows/codex-lifecycle-one-shot.yml").read_text(encoding="utf-8")
-          marker = "          python3 - <<'PY'\n"
-          start = workflow.index(marker) + len(marker)
-          end = workflow.index("\n          PY", start)
-          block = workflow[start:end]
-          lines = [line[10:] if line.startswith("          ") else line for line in block.splitlines()]
-          Path("/tmp/apply_codex_lifecycle.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          lines = workflow.splitlines()
+          start = next(
+              index + 1
+              for index, line in enumerate(lines)
+              if line.strip() == "python3 - <<'PY'"
+          )
+          end = next(
+              index
+              for index, line in enumerate(lines[start:], start=start)
+              if line.strip() == "PY"
+          )
+          script = dedent("\n".join(lines[start:end])) + "\n"
+          Path("/tmp/apply_codex_lifecycle.py").write_text(script, encoding="utf-8")
           PY
           extract_status=$?
 
@@ -78,6 +86,7 @@ jobs:
             echo "targeted_status=$targeted_status"
             echo "workspace_status=$workspace_status"
           } >> "$LOG"
+          cat "$LOG"
 
           if [ "$extract_status" -eq 0 ] && [ "$patch_status" -eq 0 ] && [ "$fmt_status" -eq 0 ] && [ "$targeted_status" -eq 0 ] && [ "$workspace_status" -eq 0 ]; then
             echo "success=true" >> "$GITHUB_OUTPUT"
@@ -103,6 +112,6 @@ jobs:
         run: |
           git config user.name "chatgpt-codex-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add .github/codex-lifecycle-diagnostic.log
+          git add -f .github/codex-lifecycle-diagnostic.log
           git commit -m "test(codex): record lifecycle validation failure"
           git push origin HEAD:validation/codex-lifecycle
