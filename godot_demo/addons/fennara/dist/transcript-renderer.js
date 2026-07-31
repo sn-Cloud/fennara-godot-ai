@@ -20,8 +20,19 @@
     let pendingAssistantText = null;
     let pendingAssistantStick = false;
     let assistantRenderFrame = 0;
+    let pendingToolStick = false;
     let streamActive = false;
     let streamFollowing = false;
+    const toolRenderQueue = createFrameCoalescer({
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+      onFlush(items) {
+        const shouldStick = pendingToolStick;
+        pendingToolStick = false;
+        items.forEach(renderToolCall);
+        keepBottomIfNeeded(shouldStick);
+      },
+    });
 
     transcript?.addEventListener(
       "scroll",
@@ -45,6 +56,7 @@
       contextCompactionMarker = null;
       streamActive = false;
       streamFollowing = false;
+      clearPendingToolRenders();
       clearPendingAssistantRender();
       if (resetCost) {
         onResetCost?.();
@@ -107,6 +119,7 @@
     }
 
     function beginStream() {
+      flushToolRenders();
       flushAssistantRender();
       streamActive = true;
       streamFollowing = isNearBottom();
@@ -114,6 +127,7 @@
     }
 
     function endStream() {
+      flushToolRenders();
       flushAssistantRender();
       clearGenerationStatus();
       keepBottomIfNeeded(streamFollowing);
@@ -247,6 +261,7 @@
     }
 
     function resetStreamState() {
+      flushToolRenders();
       flushAssistantRender();
       clearGenerationStatus();
       activeAssistant = null;
@@ -255,6 +270,7 @@
     }
 
     function resetActiveAssistant() {
+      flushToolRenders();
       flushAssistantRender();
       activeAssistant = null;
       activeToolAnchor = null;
@@ -266,6 +282,7 @@
     }
 
     function startThinkingCard() {
+      flushToolRenders();
       const card = document.createElement("details");
       card.className = "thinking-card";
       card.open = true;
@@ -333,6 +350,7 @@
     }
 
     function updateAssistantText(text) {
+      flushToolRenders();
       if (!activeAssistant && !String(text || "").trim()) {
         return;
       }
@@ -376,60 +394,74 @@
       pendingAssistantStick = false;
     }
 
-    function updateToolCall(item) {
-      clearGenerationStatus();
-      const shouldStick = isNearBottom();
-      const id = item.id || "tool_call";
-      let node = activeTools.get(id);
-      if (!node || !node.isConnected) {
-        flushAssistantRender();
-        node = document.createElement("details");
-        node.className = "tool-call";
-        node.open = !isTerminalToolStatus(item.status || "in_progress");
-        node.innerHTML = [
-          "<summary>",
-          '<span class="tool-chevron" aria-hidden="true">›</span>',
-          '<span class="tool-status" aria-hidden="true"></span>',
-          "<code></code>",
-          "<span></span>",
-          "</summary>",
-          '<div class="tool-body markdown-body"></div>',
-        ].join("");
-        insertToolNode(node);
-        activeTools.set(id, node);
-      }
+function updateToolCall(item) {
+  clearGenerationStatus();
+  const update = item || {};
+  const id = update.id || "tool_call";
+  pendingToolStick = pendingToolStick || isNearBottom();
+  toolRenderQueue.schedule(id, update);
+}
 
-      const status = item.status || "in_progress";
-      node.classList.toggle("done", status === "done" || status === "completed");
-      node.classList.toggle("failed", status === "failed");
-      node.classList.toggle("timed-out", status === "timed_out");
-      node.classList.toggle("cancelled", status === "cancelled");
-      node.classList.toggle("denied", status === "denied");
-      node.classList.toggle("pending-approval", status === "pending_approval");
-      node.querySelector("code").textContent = item.name || "tool";
-      node.querySelector("summary > span:last-child").textContent =
-        toolStatusLabel(status);
-      if (isTerminalToolStatus(status)) {
-        node.open = false;
-      } else if (status === "pending_approval") {
-        node.open = true;
-      }
+function flushToolRenders() {
+  toolRenderQueue.flush();
+}
 
-      const body = node.querySelector(".tool-body");
-      if (body) {
-        chainToolBodyWheel(body);
-        const content = item.content || approvalMarkdown(item.approval) || (item.arguments ? "```json\n" + item.arguments + "\n```" : "");
-        const images = normalizeAttachments(item.images || item.attachments || []);
-        renderMarkdown(body, content);
-        const markdownImages = extractMarkdownImageAttachments(body);
-        const toolImages = images.concat(markdownImages);
-        if (toolImages.length > 0) {
-          body.append(renderAttachmentGrid(toolImages, "message-attachments tool-attachments"));
-        }
-        renderToolApproval(body, item.approval);
-      }
-      keepBottomIfNeeded(shouldStick);
+function clearPendingToolRenders() {
+  toolRenderQueue.clear();
+  pendingToolStick = false;
+}
+
+function renderToolCall(item) {
+  const id = item.id || "tool_call";
+  let node = activeTools.get(id);
+  if (!node || !node.isConnected) {
+    flushAssistantRender();
+    node = document.createElement("details");
+    node.className = "tool-call";
+    node.open = !isTerminalToolStatus(item.status || "in_progress");
+    node.innerHTML = [
+      "<summary>",
+      '<span class="tool-chevron" aria-hidden="true">›</span>',
+      '<span class="tool-status" aria-hidden="true"></span>',
+      "<code></code>",
+      "<span></span>",
+      "</summary>",
+      '<div class="tool-body markdown-body"></div>',
+    ].join("");
+    insertToolNode(node);
+    activeTools.set(id, node);
+  }
+
+  const status = item.status || "in_progress";
+  node.classList.toggle("done", status === "done" || status === "completed");
+  node.classList.toggle("failed", status === "failed");
+  node.classList.toggle("timed-out", status === "timed_out");
+  node.classList.toggle("cancelled", status === "cancelled");
+  node.classList.toggle("denied", status === "denied");
+  node.classList.toggle("pending-approval", status === "pending_approval");
+  node.querySelector("code").textContent = item.name || "tool";
+  node.querySelector("summary > span:last-child").textContent =
+    toolStatusLabel(status);
+  if (isTerminalToolStatus(status)) {
+    node.open = false;
+  } else if (status === "pending_approval") {
+    node.open = true;
+  }
+
+  const body = node.querySelector(".tool-body");
+  if (body) {
+    chainToolBodyWheel(body);
+    const content = item.content || approvalMarkdown(item.approval) || (item.arguments ? "```json\n" + item.arguments + "\n```" : "");
+    const images = normalizeAttachments(item.images || item.attachments || []);
+    renderMarkdown(body, content);
+    const markdownImages = extractMarkdownImageAttachments(body);
+    const toolImages = images.concat(markdownImages);
+    if (toolImages.length > 0) {
+      body.append(renderAttachmentGrid(toolImages, "message-attachments tool-attachments"));
     }
+    renderToolApproval(body, item.approval);
+  }
+}
 
     function isTerminalToolStatus(status) {
       return status === "done" ||
@@ -988,11 +1020,62 @@
     };
   }
 
+  function createFrameCoalescer(options) {
+    const pending = new Map();
+    let frame = 0;
+
+    function drain() {
+      if (!pending.size) {
+        return;
+      }
+      const values = Array.from(pending.values());
+      pending.clear();
+      options.onFlush(values);
+    }
+
+    function schedule(key, value) {
+      pending.set(String(key), value);
+      if (frame) {
+        return;
+      }
+      frame = options.requestFrame(() => {
+        frame = 0;
+        drain();
+      });
+    }
+
+    function flush() {
+      if (frame) {
+        options.cancelFrame(frame);
+        frame = 0;
+      }
+      drain();
+    }
+
+    function clear() {
+      if (frame) {
+        options.cancelFrame(frame);
+        frame = 0;
+      }
+      pending.clear();
+    }
+
+    return {
+      schedule,
+      flush,
+      clear,
+      pendingCount: () => pending.size,
+    };
+  }
+
   function normalizeMarkdown(text) {
     return text
       .replace(/^H([1-6]):\s+/gim, (_match, level) => "#".repeat(Number(level)) + " ")
       .replace(/^!\s*\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gim, "![$1]($2)");
   }
 
-  window.FennaraTranscriptRenderer = { createTranscriptRenderer };
+  window.FennaraTranscriptRenderer = {
+    createTranscriptRenderer,
+    _createFrameCoalescer: createFrameCoalescer,
+  };
 })();

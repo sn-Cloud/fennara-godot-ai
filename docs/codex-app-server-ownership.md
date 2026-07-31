@@ -52,10 +52,13 @@ The following tests are part of the Rust workspace and use the fake app-server w
 | Compatibility | `older_runtime_is_rejected_before_initialized_notification`, `newer_runtime_is_allowed_but_marked_unverified`, `missing_required_initialize_field_is_rejected` and the unit tests in `codex_runtime.rs` |
 | Missing/corrupt/interrupted runtime | Managed-runtime tests cover checksum success, checksum mismatch cleanup, download cancellation cleanup, interrupted activation recovery, safe replacement and the pinned official asset contract. |
 | Event throughput | `burst_events_are_drained_without_blocking_the_runtime` and `external_tool_event_burst_does_not_block_the_app_server_stream` drain 10,000 synthetic events; the latter also includes MCP lifecycle events and enforces a 10-second CI budget. |
+| Embedded UI scheduling | `transcript-renderer-coalescing.test.js` submits 10,000 updates for one tool before an animation frame and verifies that only the newest state is rendered once. It also verifies independent tool IDs, synchronous terminal flush and cancellation cleanup. |
 
 ## Performance interpretation
 
-The 10,000-event tests are regression guards for daemon/app-server backpressure and event-card processing. They demonstrate that using a tool does not synchronously block the provider stream under the synthetic workload. They are not a Godot frame-time benchmark. Real editor lag still depends on the selected Godot tool, project size, filesystem activity, imports and scene refresh work, so release testing should additionally profile Godot frame time and editor responsiveness on representative projects.
+The daemon-side 10,000-event tests are regression guards for app-server backpressure and event-card processing. The embedded transcript renderer additionally coalesces repeated updates for the same tool ID and renders only the newest state once per animation frame; stream completion, cancellation and reset synchronously flush or discard pending state. This removes event-rate-proportional Markdown parsing, DOM replacement and layout work from the Godot WebView path.
+
+These automated checks demonstrate that tool progress traffic does not synchronously block the provider stream or force one UI render per event. They are not a full Godot frame-time benchmark. Real editor lag can still be caused by the selected Godot tool, project size, filesystem activity, asset imports and scene refresh work, so release testing should additionally profile Godot frame time and editor responsiveness on representative projects.
 
 ## Non-goals
 
