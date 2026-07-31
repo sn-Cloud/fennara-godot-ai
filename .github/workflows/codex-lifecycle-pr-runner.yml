@@ -1,0 +1,107 @@
+name: Internal Codex lifecycle validation
+
+on:
+  pull_request_target:
+    branches:
+      - feature/codex-embedded-provider
+    types:
+      - opened
+    paths:
+      - .github/codex-lifecycle-trigger
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'validation/codex-lifecycle'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: validation/codex-lifecycle
+          fetch-depth: 0
+
+      - name: Apply lifecycle patch and run tests
+        id: validation
+        shell: bash
+        run: |
+          set +e
+          LOG=.github/codex-lifecycle-diagnostic.log
+          : > "$LOG"
+
+          python3 - <<'PY' >> "$LOG" 2>&1
+          from pathlib import Path
+
+          workflow = Path(".github/workflows/codex-lifecycle-one-shot.yml").read_text(encoding="utf-8")
+          marker = "          python3 - <<'PY'\n"
+          start = workflow.index(marker) + len(marker)
+          end = workflow.index("\n          PY", start)
+          block = workflow[start:end]
+          lines = [line[10:] if line.startswith("          ") else line for line in block.splitlines()]
+          Path("/tmp/apply_codex_lifecycle.py").write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          extract_status=$?
+
+          patch_status=99
+          fmt_status=99
+          targeted_status=99
+          workspace_status=99
+
+          if [ "$extract_status" -eq 0 ]; then
+            python3 /tmp/apply_codex_lifecycle.py >> "$LOG" 2>&1
+            patch_status=$?
+          fi
+          if [ "$patch_status" -eq 0 ]; then
+            (cd local && cargo fmt --all) >> "$LOG" 2>&1
+            fmt_status=$?
+          fi
+          if [ "$fmt_status" -eq 0 ]; then
+            (cd local && cargo test -p fennara-daemon codex_app_server::integration_tests -- --nocapture) >> "$LOG" 2>&1
+            targeted_status=$?
+          fi
+          if [ "$targeted_status" -eq 0 ]; then
+            (cd local && cargo test --workspace) >> "$LOG" 2>&1
+            workspace_status=$?
+          fi
+
+          {
+            echo
+            echo "extract_status=$extract_status"
+            echo "patch_status=$patch_status"
+            echo "fmt_status=$fmt_status"
+            echo "targeted_status=$targeted_status"
+            echo "workspace_status=$workspace_status"
+          } >> "$LOG"
+
+          if [ "$extract_status" -eq 0 ] && [ "$patch_status" -eq 0 ] && [ "$fmt_status" -eq 0 ] && [ "$targeted_status" -eq 0 ] && [ "$workspace_status" -eq 0 ]; then
+            echo "success=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "success=false" >> "$GITHUB_OUTPUT"
+          fi
+          exit 0
+
+      - name: Commit successful lifecycle coverage
+        if: steps.validation.outputs.success == 'true'
+        run: |
+          git config user.name "chatgpt-codex-bot"
+          git config user.email "actions@users.noreply.github.com"
+          rm -f .github/codex-lifecycle-diagnostic.log
+          git add \
+            local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server/integration_tests.rs \
+            local/crates/fennara-daemon/tests/fixtures/fake_codex_app_server.py
+          git commit -m "test(codex): cover cancellation crashes and lifecycle"
+          git push origin HEAD:validation/codex-lifecycle
+
+      - name: Commit lifecycle diagnostics
+        if: steps.validation.outputs.success != 'true'
+        run: |
+          git config user.name "chatgpt-codex-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add .github/codex-lifecycle-diagnostic.log
+          git commit -m "test(codex): record lifecycle validation failure"
+          git push origin HEAD:validation/codex-lifecycle
