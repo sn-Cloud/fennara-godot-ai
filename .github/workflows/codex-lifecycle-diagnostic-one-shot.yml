@@ -98,3 +98,5 @@ jobs:
           git add .github/codex-lifecycle-diagnostic.log
           git commit -m "test(codex): record lifecycle validation failure"
           git push origin HEAD:feature/codex-embedded-provider
+
+# second push registers and triggers this branch-only diagnostic workflow
