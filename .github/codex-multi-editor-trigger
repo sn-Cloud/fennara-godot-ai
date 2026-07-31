@@ -1,0 +1,1 @@
+Validate independent Codex thread bindings across two Godot project/editor scopes and the complete Rust workspace.
