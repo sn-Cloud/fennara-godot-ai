@@ -1163,8 +1163,8 @@
           details.push("tested runtime");
         } else if (compatibility === "compatible_unverified") {
           details.push("unverified runtime");
-        } else if (compatibility === "unknown") {
-          details.push("unknown runtime");
+        } else if (compatibility === "incompatible") {
+          details.push("incompatible runtime");
         }
         return details.length ? `Connected · ${details.join(" · ")}` : "Connected";
       }
