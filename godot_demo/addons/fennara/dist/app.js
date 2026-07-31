@@ -7,6 +7,7 @@
   const SHOW_RELOAD_BUTTON = true;
   const SETTINGS_SAVED_NOTICE_MS = 1800;
   const SETTINGS_SAVE_TIMEOUT_MS = 8000;
+  const CODEX_RUNTIME_POLL_MS = 500;
   const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
   const DEFAULT_LOCAL_BASE_URLS = {
     ollama: DEFAULT_OLLAMA_BASE_URL,
@@ -186,6 +187,9 @@
   let latestPromptTokens = 0;
   let projectStatusTimer = 0;
   let codexLoginPollTimer = 0;
+  let codexRuntimePollTimer = 0;
+  let codexRuntimeStatus = null;
+  let codexRuntimeInstallRequested = false;
   let canRevert = false;
   let modelPicker = null;
   let providerPopovers = null;
@@ -256,6 +260,7 @@
       requestProjectStatus();
       startProjectStatusPolling();
       requestModelList();
+      requestCodexRuntimeStatus();
       requestCodexAccountStatus();
       flushPendingSettings();
     },
@@ -265,6 +270,7 @@
     onClose() {
       appShell?.setAttribute("data-connection", "offline");
       stopProjectStatusPolling();
+      stopCodexRuntimePolling();
       mcpAppsSettings?.handleDisconnect();
       if (pendingCustomProviderSaves.size) {
         pendingCustomProviderSaves.clear();
@@ -1111,7 +1117,19 @@
     }
     if (provider.auth?.type === "account") {
       const account = provider.account || {};
-      if (account.installed === false) {
+      if (account.installed === false && !codexRuntimeStatus?.installed) {
+        if (codexRuntimeStatus?.installing) {
+          return `${codexRuntimeProgressLabel(codexRuntimeStatus)} · click to cancel`;
+        }
+        if (codexRuntimeStatus?.supported) {
+          if (codexRuntimeStatus?.repair_required) {
+            return "Codex runtime is damaged · click to repair";
+          }
+          if (codexRuntimeStatus?.error) {
+            return "Codex runtime install failed · click to retry";
+          }
+          return "Install Codex runtime";
+        }
         return "Codex CLI not installed";
       }
       if (account.signing_in) {
@@ -1370,11 +1388,71 @@
     return Math.floor(parsed);
   }
 
+  function requestCodexRuntimeStatus() {
+    return send({
+      type: "codex_runtime_status",
+      request_id: nextRequestId("codex-runtime-status"),
+    });
+  }
+
   function requestCodexAccountStatus() {
     return send({
       type: "codex_account_status",
       request_id: nextRequestId("codex-account-status"),
     });
+  }
+
+  function stopCodexRuntimePolling() {
+    window.clearInterval(codexRuntimePollTimer);
+    codexRuntimePollTimer = 0;
+  }
+
+  function startCodexRuntimePolling() {
+    stopCodexRuntimePolling();
+    codexRuntimePollTimer = window.setInterval(requestCodexRuntimeStatus, CODEX_RUNTIME_POLL_MS);
+  }
+
+  function codexRuntimeProgressLabel(status) {
+    const downloaded = Number(status?.downloaded_bytes || 0);
+    const total = Number(status?.total_bytes || 0);
+    const formatBytes = (value) => {
+      if (!Number.isFinite(value) || value <= 0) {
+        return "0 MB";
+      }
+      return `${(value / (1024 * 1024)).toFixed(value >= 10 * 1024 * 1024 ? 0 : 1)} MB`;
+    };
+    if (total > 0) {
+      return `Installing Codex runtime ${formatBytes(downloaded)} / ${formatBytes(total)}`;
+    }
+    return downloaded > 0
+      ? `Installing Codex runtime ${formatBytes(downloaded)}`
+      : "Starting Codex runtime installation";
+  }
+
+  function applyCodexRuntimeStatus(status) {
+    codexRuntimeStatus = status || null;
+    updateProviderUi();
+    if (codexRuntimeStatus?.installing) {
+      startCodexRuntimePolling();
+      return;
+    }
+    stopCodexRuntimePolling();
+    if (codexRuntimeStatus?.installed) {
+      requestCodexAccountStatus();
+      if (codexRuntimeInstallRequested) {
+        codexRuntimeInstallRequested = false;
+        appendSystem("Codex runtime installed. Starting ChatGPT login...");
+        send({
+          type: "codex_login_start",
+          request_id: nextRequestId("codex-login-after-runtime-install"),
+        });
+      }
+      return;
+    }
+    if (codexRuntimeStatus?.error) {
+      codexRuntimeInstallRequested = false;
+      appendSystem(codexRuntimeStatus.error);
+    }
   }
 
   function stopCodexLoginPolling() {
@@ -1419,6 +1497,32 @@
       return;
     }
     if (!provider.connected) {
+      const runtimeAvailable = provider.account?.installed !== false || codexRuntimeStatus?.installed;
+      if (!runtimeAvailable) {
+        if (codexRuntimeStatus?.installing) {
+          appendSystem("Cancelling Codex runtime installation...");
+          codexRuntimeInstallRequested = false;
+          send({
+            type: "codex_runtime_install_cancel",
+            request_id: nextRequestId("codex-runtime-install-cancel"),
+          });
+          return;
+        }
+        if (!codexRuntimeStatus?.supported) {
+          appendSystem("Codex CLI is not installed, and automatic installation is not supported on this platform yet.");
+          return;
+        }
+        codexRuntimeInstallRequested = true;
+        appendSystem(codexRuntimeStatus?.repair_required
+          ? "Repairing the Codex runtime..."
+          : "Installing the Codex runtime...");
+        send({
+          type: "codex_runtime_install_start",
+          request_id: nextRequestId("codex-runtime-install-start"),
+        });
+        startCodexRuntimePolling();
+        return;
+      }
       if (provider.account?.signing_in) {
         appendSystem("Cancelling Codex ChatGPT login...");
         send({
@@ -1602,6 +1706,10 @@
         markSettingsClean();
         clearSystemStatus();
       }
+      return;
+    }
+    if (message.type === "codex_runtime_status") {
+      applyCodexRuntimeStatus(message.status);
       return;
     }
     if (message.type === "codex_login_started") {
@@ -1845,6 +1953,11 @@
         if (updateStartOverlay) {
           updateStartOverlay.hidden = true;
         }
+      }
+      if (requestId.startsWith("codex-runtime")) {
+        codexRuntimeInstallRequested = false;
+        stopCodexRuntimePolling();
+        requestCodexRuntimeStatus();
       }
       if (requestId.startsWith("open-project-file")) {
         appendSystem(errorText);

@@ -299,6 +299,9 @@ mod tests {
         );
         for expected in [
             "codex_login_cancel",
+            "codex_runtime_install_start",
+            "codex_runtime_install_cancel",
+            "codex_runtime_status",
             "compatible_unverified",
             "Click the Codex provider again to cancel",
         ] {
