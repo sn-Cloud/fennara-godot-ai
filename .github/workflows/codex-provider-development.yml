@@ -10,12 +10,11 @@ permissions:
   contents: write
 
 concurrency:
-  group: codex-provider-development-${{ github.event.pull_request.number || github.ref }}
+  group: codex-provider-development
   cancel-in-progress: false
 
 jobs:
   apply-phase-one:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.head_ref == 'feature/codex-embedded-provider' }}
     runs-on: ubuntu-latest
 
     steps:
@@ -36,22 +35,7 @@ jobs:
           set -euo pipefail
           sed -i 's/    expected=2,/    expected=1,/' .github/scripts/apply_codex_provider_phase1.py
           python .github/scripts/apply_codex_provider_phase1.py
-          python - <<'PY'
-          from pathlib import Path
-          path = Path('local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs')
-          content = path.read_text(encoding='utf-8')
-          old = '''        max_output_tokens: None,
-        cwd: None,
-        approval_mode: "ask".to_string(),'''
-          new = '''        max_output_tokens: None,
-        chat_id: None,
-        cwd: None,
-        approval_mode: "ask".to_string(),'''
-          count = content.count(old)
-          if count != 1:
-              raise RuntimeError(f'expected one remaining ChatRequest constructor, found {count}')
-          path.write_text(content.replace(old, new, 1), encoding='utf-8', newline='\n')
-          PY
+          python -c "from pathlib import Path; p=Path('local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs'); s=p.read_text(encoding='utf-8'); n=chr(10); old='        max_output_tokens: None,'+n+'        cwd: None,'+n+'        approval_mode: \"ask\".to_string(),'; new='        max_output_tokens: None,'+n+'        chat_id: None,'+n+'        cwd: None,'+n+'        approval_mode: \"ask\".to_string(),'; count=s.count(old); assert count == 1, f'expected one remaining ChatRequest constructor, found {count}'; p.write_text(s.replace(old,new,1), encoding='utf-8', newline=n)"
 
       - name: Format Rust
         working-directory: local
