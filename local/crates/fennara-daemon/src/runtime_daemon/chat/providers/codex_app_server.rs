@@ -786,6 +786,13 @@ impl CodexConnection {
         approval_tx: Option<ProviderApprovalSender>,
     ) -> Result<Self, LlmError> {
         let runtime_spec = codex_runtime::resolve_runtime()?;
+        Self::spawn_runtime(runtime_spec, approval_tx).await
+    }
+
+    async fn spawn_runtime(
+        runtime_spec: codex_runtime::CodexRuntimeSpec,
+        approval_tx: Option<ProviderApprovalSender>,
+    ) -> Result<Self, LlmError> {
         let mut command = codex_runtime::build_app_server_command(&runtime_spec)?;
         command
             .stdin(Stdio::piped())
@@ -1008,6 +1015,11 @@ impl CodexConnection {
 
     async fn process_exit_message(&mut self) -> String {
         let status = self.child.try_wait().ok().flatten();
+        if status.is_some() {
+            if let Some(task) = self.stderr_task.take() {
+                let _ = timeout(Duration::from_millis(500), task).await;
+            }
+        }
         let diagnostics = stderr_snapshot(&self.stderr_lines).await;
         let status_text = status
             .map(|status| format!(" with status {status}"))
@@ -1139,6 +1151,9 @@ fn rpc_error(error: &Value) -> LlmError {
         retryable: false,
     }
 }
+
+#[cfg(test)]
+mod integration_tests;
 
 #[cfg(test)]
 mod tests {

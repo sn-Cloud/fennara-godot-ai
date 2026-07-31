@@ -35,7 +35,11 @@ fn fixture_runtime(scenario: &str) -> FixtureRuntime {
         .join("tests")
         .join("fixtures")
         .join("fake_codex_app_server.py");
-    assert!(fixture.is_file(), "fixture must exist: {}", fixture.display());
+    assert!(
+        fixture.is_file(),
+        "fixture must exist: {}",
+        fixture.display()
+    );
     let executable = write_fixture_launcher(&root, scenario, &fixture);
     FixtureRuntime {
         root,
@@ -247,7 +251,7 @@ async fn assert_approval_round_trip(
     expected_kind: ProviderApprovalKind,
     decision: ProviderApprovalDecision,
 ) {
-    let (approval_tx, mut approval_rx) = mpsc::unbounded_channel();
+    let (approval_tx, mut approval_rx) = mpsc::unbounded_channel::<ProviderApprovalRequest>();
     let approval_task = tokio::spawn(async move {
         let request = timeout(TEST_TIMEOUT, approval_rx.recv())
             .await
@@ -305,11 +309,17 @@ async fn compaction_events_do_not_break_thread_completion() {
 async fn invalid_json_is_reported_as_provider_output_error() {
     let (_fixture, mut connection) = spawn_fixture("invalid-json-turn", None).await;
     let thread_id = start_thread(&mut connection).await;
-    start_turn(&mut connection, &thread_id).await;
     let error = connection
-        .read_message()
+        .request(
+            "turn/start",
+            json!({
+                "threadId": thread_id,
+                "input": [{ "type": "text", "text": "test turn" }]
+            }),
+            TEST_TIMEOUT,
+        )
         .await
-        .expect_err("invalid JSON should fail");
+        .expect_err("invalid JSON should fail the active request");
     match error {
         LlmError::InvalidProviderOutput { raw, .. } => {
             assert_eq!(raw.as_deref(), Some("{not valid json}"));
@@ -322,15 +332,24 @@ async fn invalid_json_is_reported_as_provider_output_error() {
 #[tokio::test]
 async fn crash_diagnostics_include_stderr_and_exit_status() {
     let fixture = fixture_runtime("crash-initialize");
-    let error = timeout(
+    let result = timeout(
         TEST_TIMEOUT,
         CodexConnection::spawn_runtime(fixture.spec.clone(), None),
     )
     .await
-    .expect("crash initialize timed out")
-    .expect_err("crash initialize should fail");
+    .expect("crash initialize timed out");
+    let error = match result {
+        Ok(mut connection) => {
+            connection.shutdown().await;
+            panic!("crash initialize should fail");
+        }
+        Err(error) => error,
+    };
     let message = error.user_message();
-    assert!(message.contains("fake Codex crash at initialize"), "{message}");
+    assert!(
+        message.contains("fake Codex crash at initialize"),
+        "{message}"
+    );
     assert!(message.contains("status"), "{message}");
 }
 
