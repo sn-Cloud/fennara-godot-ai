@@ -1115,11 +1115,32 @@
         return "Codex CLI not installed";
       }
       if (account.signing_in) {
-        return "Waiting for browser login";
+        return "Waiting for browser login · click to cancel";
       }
       if (provider.connected) {
         const plan = String(account.plan_type || "").trim();
-        return plan ? `Connected · ${plan}` : "Connected";
+        const runtime = account.runtime || {};
+        const version = String(runtime.version || "").trim();
+        const platform = String(runtime.platform || "").trim();
+        const compatibility = String(runtime.compatibility || "").trim();
+        const details = [];
+        if (plan) {
+          details.push(plan);
+        }
+        if (version) {
+          details.push(`Codex ${version}`);
+        }
+        if (platform && platform !== "unsupported") {
+          details.push(platform);
+        }
+        if (compatibility === "tested") {
+          details.push("tested runtime");
+        } else if (compatibility === "compatible_unverified") {
+          details.push("unverified runtime");
+        } else if (compatibility === "unknown") {
+          details.push("unknown runtime");
+        }
+        return details.length ? `Connected · ${details.join(" · ")}` : "Connected";
       }
       return "Sign in with ChatGPT";
     }
@@ -1398,6 +1419,14 @@
       return;
     }
     if (!provider.connected) {
+      if (provider.account?.signing_in) {
+        appendSystem("Cancelling Codex ChatGPT login...");
+        send({
+          type: "codex_login_cancel",
+          request_id: nextRequestId("codex-login-cancel"),
+        });
+        return;
+      }
       appendSystem("Starting Codex ChatGPT login...");
       send({
         type: "codex_login_start",
@@ -1579,7 +1608,7 @@
       const authUrl = String(message.login?.auth_url || "");
       if (authUrl) {
         window.open(authUrl, "_blank", "noopener,noreferrer");
-        appendSystem(`Complete Codex login in your browser: ${authUrl}`);
+        appendSystem(`Complete Codex login in your browser: ${authUrl}. Click the Codex provider again to cancel.`);
       } else {
         appendSystem("Codex did not return a browser login URL.");
       }

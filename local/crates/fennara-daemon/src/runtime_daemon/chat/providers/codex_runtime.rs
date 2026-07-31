@@ -40,31 +40,12 @@ pub(crate) enum CodexRuntimeSource {
     Path,
 }
 
-impl CodexRuntimeSource {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Configured => "configured",
-            Self::Path => "path",
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CodexCompatibility {
     Tested,
     CompatibleUnverified,
     Unknown,
-}
-
-impl CodexCompatibility {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Self::Tested => "tested",
-            Self::CompatibleUnverified => "compatible_unverified",
-            Self::Unknown => "unknown",
-        }
-    }
 }
 
 #[derive(Clone, Debug)]

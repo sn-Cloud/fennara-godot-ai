@@ -290,6 +290,26 @@ mod tests {
     }
 
     #[test]
+    fn codex_account_ui_exposes_cancel_and_runtime_compatibility() {
+        let source = include_str!("../../../../../../ui/chat/app.js");
+        let distributed = include_str!("../../../../../../godot_demo/addons/fennara/dist/app.js");
+        assert_eq!(
+            source, distributed,
+            "source and distributed chat UI must match"
+        );
+        for expected in [
+            "codex_login_cancel",
+            "compatible_unverified",
+            "Click the Codex provider again to cancel",
+        ] {
+            assert!(
+                distributed.contains(expected),
+                "missing Codex UI marker: {expected}"
+            );
+        }
+    }
+
+    #[test]
     fn browser_chat_stylesheet_imports_are_embedded() {
         let styles = include_str!("../../../../../../godot_demo/addons/fennara/dist/styles.css");
         for line in styles.lines() {
