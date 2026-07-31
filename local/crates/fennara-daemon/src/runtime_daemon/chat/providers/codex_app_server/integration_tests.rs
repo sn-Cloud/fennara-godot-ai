@@ -3,7 +3,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use serde_json::{Value, json};
@@ -579,6 +579,129 @@ fn provider_session_bindings_survive_reopened_store_connections() {
     assert_eq!(first.resume_status, "broken");
     assert_eq!(second.resume_status, "ready");
     assert_eq!(second.provider_thread_id, "thread-second");
+}
+
+#[tokio::test]
+async fn turn_interrupt_finishes_and_reaps_the_app_server() {
+    let (fixture, mut connection) = spawn_fixture("interrupt-turn", None).await;
+    let thread_id = start_thread(&mut connection).await;
+    start_turn(&mut connection, &thread_id).await;
+    let delta = wait_for_notification(&mut connection, "item/agentMessage/delta").await;
+    assert_eq!(
+        delta.get("delta").and_then(Value::as_str),
+        Some("fixture partial response")
+    );
+
+    connection.interrupt_turn(&thread_id).await;
+    let completed = wait_for_notification(&mut connection, "turn/completed").await;
+    assert_eq!(
+        completed.pointer("/turn/status").and_then(Value::as_str),
+        Some("interrupted")
+    );
+    connection.shutdown().await;
+    assert!(
+        connection
+            .child
+            .try_wait()
+            .expect("read interrupted child status")
+            .is_some(),
+        "Codex app-server must be reaped after cancellation"
+    );
+
+    let requests = fixture_request_log(&fixture);
+    assert!(requests.iter().any(|request| {
+        request.get("method").and_then(Value::as_str) == Some("turn/interrupt")
+    }));
+}
+
+#[tokio::test]
+async fn crashed_turn_process_restarts_and_resumes_the_existing_thread() {
+    let fixture = fixture_runtime("crash-turn-once");
+    let mut crashed = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("crash fixture initialize timed out")
+    .expect("crash fixture initialize failed");
+    let thread_id = start_thread(&mut crashed).await;
+    let error = crashed
+        .request(
+            "turn/start",
+            json!({
+                "threadId": thread_id.clone(),
+                "input": [{ "type": "text", "text": "crash this turn once" }]
+            }),
+            TEST_TIMEOUT,
+        )
+        .await
+        .expect_err("first turn should crash the app-server");
+    match error {
+        LlmError::ProviderApi {
+            message, retryable, ..
+        } => {
+            assert!(retryable);
+            assert!(message.contains("Codex app-server exited"), "{message}");
+        }
+        other => panic!("unexpected crash error: {other:?}"),
+    }
+    crashed.shutdown().await;
+
+    let mut restarted = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("restart fixture initialize timed out")
+    .expect("restart fixture initialize failed");
+    let resumed = restarted
+        .request(
+            "thread/resume",
+            json!({ "threadId": thread_id.clone() }),
+            TEST_TIMEOUT,
+        )
+        .await
+        .expect("thread/resume after crash failed");
+    assert_eq!(
+        resumed.pointer("/thread/id").and_then(Value::as_str),
+        Some(thread_id.as_str())
+    );
+    start_turn_with_text(&mut restarted, &thread_id, "continue after crash").await;
+    let events = drain_turn(&mut restarted).await;
+    assert!(events.completed);
+    restarted.shutdown().await;
+}
+
+#[tokio::test]
+async fn explicit_shutdown_reaps_an_idle_app_server() {
+    let (_fixture, mut connection) = spawn_fixture("authenticated", None).await;
+    connection.shutdown().await;
+    assert!(
+        connection
+            .child
+            .try_wait()
+            .expect("read idle child status")
+            .is_some(),
+        "Codex app-server must not remain orphaned after shutdown"
+    );
+}
+
+#[tokio::test]
+async fn external_tool_event_burst_does_not_block_the_app_server_stream() {
+    let (_fixture, mut connection) = spawn_fixture("tool-burst", None).await;
+    let thread_id = start_thread(&mut connection).await;
+    let started = Instant::now();
+    start_turn(&mut connection, &thread_id).await;
+    let events = drain_turn(&mut connection).await;
+    let elapsed = started.elapsed();
+    assert_eq!(events.deltas, 10_000);
+    assert_eq!(events.mcp_activities.len(), 3);
+    assert!(events.completed);
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "synthetic tool/event burst stalled for {elapsed:?}"
+    );
+    connection.shutdown().await;
 }
 
 #[tokio::test]

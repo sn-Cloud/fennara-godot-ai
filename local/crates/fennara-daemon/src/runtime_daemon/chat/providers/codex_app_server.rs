@@ -1241,7 +1241,14 @@ impl CodexConnection {
     }
 
     async fn process_exit_message(&mut self) -> String {
-        let status = self.child.try_wait().ok().flatten();
+        let status = match self.child.try_wait() {
+            Ok(Some(status)) => Some(status),
+            Ok(None) => match timeout(Duration::from_millis(500), self.child.wait()).await {
+                Ok(Ok(status)) => Some(status),
+                _ => None,
+            },
+            Err(_) => None,
+        };
         if status.is_some() {
             if let Some(task) = self.stderr_task.take() {
                 let _ = timeout(Duration::from_millis(500), task).await;

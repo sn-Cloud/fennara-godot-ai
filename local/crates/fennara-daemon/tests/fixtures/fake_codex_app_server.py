@@ -95,6 +95,9 @@ class Scenario:
             "compaction": {"compact": True},
             "crash-initialize": {"crash_at": "initialize"},
             "crash-turn": {"crash_at": "turn"},
+            "crash-turn-once": {"crash_at": "turn-once"},
+            "interrupt-turn": {"turn_result": "await-interrupt"},
+            "tool-burst": {"burst_deltas": 10_000, "tool_progress": True},
             "invalid-json-turn": {"invalid_json_at": "turn"},
             "burst": {"burst_deltas": 10_000},
             "unknown-events": {"unknown_events": True},
@@ -177,10 +180,18 @@ class FakeCodexAppServer:
             time.sleep(self.scenario.delay_ms / 1000)
 
     def maybe_crash(self, point: str) -> None:
-        if self.scenario.crash_at == point:
-            sys.stderr.write(f"fake Codex crash at {point}\n")
-            sys.stderr.flush()
-            raise SystemExit(70)
+        crash_at = self.scenario.crash_at
+        if crash_at == f"{point}-once":
+            self.codex_home.mkdir(parents=True, exist_ok=True)
+            marker = self.codex_home / f"fake-crash-{point}-once"
+            if marker.exists():
+                return
+            marker.write_text("crashed", encoding="utf-8")
+        elif crash_at != point:
+            return
+        sys.stderr.write(f"fake Codex crash at {point}\n")
+        sys.stderr.flush()
+        raise SystemExit(70)
 
     def handle(self, message: dict[str, Any]) -> None:
         if not message:
@@ -343,6 +354,25 @@ class FakeCodexAppServer:
                 return
             turn_id = f"turn-{uuid.uuid4()}"
             response(message_id, {"turn": {"id": turn_id}})
+            if self.scenario.turn_result == "await-interrupt":
+                item_id = f"agent-{uuid.uuid4()}"
+                notification(
+                    "turn/started",
+                    {
+                        "threadId": thread_id,
+                        "turn": {"id": turn_id, "status": "inProgress"},
+                    },
+                )
+                notification(
+                    "item/agentMessage/delta",
+                    {
+                        "threadId": thread_id,
+                        "turnId": turn_id,
+                        "itemId": item_id,
+                        "delta": "fixture partial response",
+                    },
+                )
+                return
             self.emit_turn(thread_id, turn_id)
             return
 

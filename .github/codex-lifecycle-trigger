@@ -1,0 +1,1 @@
+Validate Codex app-server cancellation, crash recovery, process cleanup, concurrency isolation, synthetic tool-event throughput, and deterministic exit-status diagnostics.
