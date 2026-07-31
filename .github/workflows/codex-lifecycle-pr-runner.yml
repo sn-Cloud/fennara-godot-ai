@@ -1,11 +1,12 @@
 name: Internal Codex lifecycle validation
 
 on:
-  pull_request_target:
+  pull_request:
     branches:
       - feature/codex-embedded-provider
     types:
       - opened
+      - reopened
     paths:
       - .github/codex-lifecycle-trigger
 
