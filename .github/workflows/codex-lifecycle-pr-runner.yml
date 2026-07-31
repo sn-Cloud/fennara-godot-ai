@@ -37,13 +37,15 @@ jobs:
           : > "$LOG"
 
           python3 .github/scripts/apply_codex_lifecycle.py >> "$LOG" 2>&1
-          patch_status=$?
+          lifecycle_patch_status=$?
+          python3 .github/scripts/fix_codex_exit_race.py >> "$LOG" 2>&1
+          exit_race_patch_status=$?
 
           fixture_status=99
           fmt_status=99
           targeted_status=99
           workspace_status=99
-          if [ "$patch_status" -eq 0 ]; then
+          if [ "$lifecycle_patch_status" -eq 0 ] && [ "$exit_race_patch_status" -eq 0 ]; then
             python3 -m py_compile \
               local/crates/fennara-daemon/tests/fixtures/fake_codex_app_server.py \
               >> "$LOG" 2>&1
@@ -64,7 +66,8 @@ jobs:
 
           {
             echo
-            echo "patch_status=$patch_status"
+            echo "lifecycle_patch_status=$lifecycle_patch_status"
+            echo "exit_race_patch_status=$exit_race_patch_status"
             echo "fixture_status=$fixture_status"
             echo "fmt_status=$fmt_status"
             echo "targeted_status=$targeted_status"
@@ -72,7 +75,8 @@ jobs:
           } >> "$LOG"
           cat "$LOG"
 
-          if [ "$patch_status" -eq 0 ] && \
+          if [ "$lifecycle_patch_status" -eq 0 ] && \
+             [ "$exit_race_patch_status" -eq 0 ] && \
              [ "$fixture_status" -eq 0 ] && \
              [ "$fmt_status" -eq 0 ] && \
              [ "$targeted_status" -eq 0 ] && \
@@ -90,9 +94,10 @@ jobs:
           git config user.email "actions@users.noreply.github.com"
           rm -f .github/codex-lifecycle-diagnostic.log
           git add \
+            local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs \
             local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server/integration_tests.rs \
             local/crates/fennara-daemon/tests/fixtures/fake_codex_app_server.py
-          git commit -m "test(codex): cover cancellation crashes and lifecycle"
+          git commit -m "fix(codex): harden app-server lifecycle handling"
           git push origin HEAD:validation/codex-lifecycle
 
       - name: Commit lifecycle diagnostics
