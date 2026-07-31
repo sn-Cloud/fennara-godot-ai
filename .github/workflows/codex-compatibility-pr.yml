@@ -33,6 +33,7 @@ jobs:
             python .github/scripts/patch_codex_initialize_validation.py &&
             python .github/scripts/patch_codex_version_policy.py &&
             python .github/scripts/patch_codex_spawn_compatibility.py &&
+            python .github/scripts/patch_codex_runtime_metadata_fixture.py &&
             python .github/scripts/patch_fixture_initialize_fields.py &&
             python .github/scripts/patch_fixture_compatibility_presets.py &&
             python .github/scripts/patch_integration_pinned_runtime_expectation.py &&
@@ -63,6 +64,7 @@ jobs:
           rm -f .github/scripts/patch_codex_initialize_validation.py
           rm -f .github/scripts/patch_codex_version_policy.py
           rm -f .github/scripts/patch_codex_spawn_compatibility.py
+          rm -f .github/scripts/patch_codex_runtime_metadata_fixture.py
           rm -f .github/scripts/patch_fixture_initialize_fields.py
           rm -f .github/scripts/patch_fixture_compatibility_presets.py
           rm -f .github/scripts/patch_integration_pinned_runtime_expectation.py
