@@ -701,6 +701,21 @@ impl StreamAccumulator {
                     message,
                 });
             }
+            StreamEvent::ExternalToolActivity {
+                id,
+                name,
+                arguments,
+                content,
+                status,
+            } => {
+                items.push(StreamItem::ExternalTool {
+                    id,
+                    name,
+                    arguments,
+                    content,
+                    status,
+                });
+            }
             StreamEvent::Status { message } => {
                 items.push(StreamItem::Status { message });
             }
@@ -1001,6 +1016,23 @@ mod tests {
             })
             .expect("final coalesced text item");
         assert_eq!(final_text.len(), 10_000);
+    }
+
+    #[test]
+    fn external_mcp_activity_does_not_create_fennara_tool_call() {
+        let mut accumulator = StreamAccumulator::default();
+        let items = accumulator
+            .items_for_event(StreamEvent::ExternalToolActivity {
+                id: "mcp-1".to_string(),
+                name: "fennara · get_scene_tree".to_string(),
+                arguments: "{}".to_string(),
+                content: "scene tree".to_string(),
+                status: "completed".to_string(),
+            })
+            .unwrap();
+        assert_eq!(accumulator.observed_tool_calls, 0);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items[0], StreamItem::ExternalTool { .. }));
     }
 
     fn custom_provider_config() -> custom::CustomProviderConfig {

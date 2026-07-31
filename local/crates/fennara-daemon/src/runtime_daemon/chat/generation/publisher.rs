@@ -234,6 +234,41 @@ where
                         )
                         .await?;
                     }
+                    StreamItem::ExternalTool {
+                        id,
+                        name,
+                        arguments,
+                        content,
+                        status,
+                    } => {
+                        let terminal = external_tool_status_is_terminal(&status);
+                        trace.with_tool_call(id.clone()).event_status(
+                            "provider.external_tool.updated",
+                            &status,
+                            json!({
+                                "tool_name": name.as_str(),
+                                "arguments_bytes": arguments.len(),
+                                "content_bytes": content.len(),
+                                "terminal": terminal
+                            }),
+                        );
+                        send_json(
+                            sender,
+                            json!({
+                                "type": "chat_item_update",
+                                "request_id": request_id.clone(),
+                                "item": {
+                                    "id": id,
+                                    "type": if terminal { "tool_result" } else { "function_call" },
+                                    "name": name,
+                                    "arguments": arguments,
+                                    "content": content,
+                                    "status": status
+                                }
+                            }),
+                        )
+                        .await?;
+                    }
                     StreamItem::FunctionCallError { id, name, arguments, message } => {
                         provisional_tools.insert(
                             id.clone(),
@@ -491,11 +526,19 @@ where
     .await
 }
 
+fn external_tool_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "done" | "completed" | "failed" | "timed_out" | "cancelled" | "denied"
+    )
+}
+
 fn stream_item_has_assistant_output(item: &StreamItem) -> bool {
     match item {
         StreamItem::Text { .. }
         | StreamItem::FunctionCall { .. }
-        | StreamItem::FunctionCallError { .. } => true,
+        | StreamItem::FunctionCallError { .. }
+        | StreamItem::ExternalTool { .. } => true,
         StreamItem::Reasoning { content, .. } => !content.trim().is_empty(),
         StreamItem::Status { .. } | StreamItem::Usage(_) => false,
     }

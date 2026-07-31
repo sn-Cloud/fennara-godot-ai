@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
@@ -155,17 +156,48 @@ async fn start_turn(connection: &mut CodexConnection, thread_id: &str) {
         .expect("turn/start failed");
 }
 
+#[derive(Clone, Debug)]
+struct ObservedMcpActivity {
+    id: String,
+    name: String,
+    arguments: String,
+    content: String,
+    status: String,
+}
+
 #[derive(Default)]
 struct TurnEvents {
     deltas: usize,
     compaction_started: usize,
     compaction_completed: usize,
+    mcp_activities: Vec<ObservedMcpActivity>,
     completed: bool,
+}
+
+fn record_mcp_activity(events: &mut TurnEvents, event: StreamEvent) {
+    let StreamEvent::ExternalToolActivity {
+        id,
+        name,
+        arguments,
+        content,
+        status,
+    } = event
+    else {
+        return;
+    };
+    events.mcp_activities.push(ObservedMcpActivity {
+        id,
+        name,
+        arguments,
+        content,
+        status,
+    });
 }
 
 async fn drain_turn(connection: &mut CodexConnection) -> TurnEvents {
     timeout(TEST_TIMEOUT, async {
         let mut events = TurnEvents::default();
+        let mut mcp_items: HashMap<String, McpItemState> = HashMap::new();
         while !events.completed {
             let message = connection.read_message().await.expect("read turn event");
             if connection
@@ -177,6 +209,28 @@ async fn drain_turn(connection: &mut CodexConnection) -> TurnEvents {
             }
             match message.get("method").and_then(Value::as_str) {
                 Some("item/agentMessage/delta") => events.deltas += 1,
+                Some("item/started") => {
+                    if let Some(event) =
+                        mcp_lifecycle_event(message.pointer("/params/item"), false, &mut mcp_items)
+                    {
+                        record_mcp_activity(&mut events, event);
+                    }
+                }
+                Some("item/mcpToolCall/progress") => {
+                    if let Some(event) = mcp_progress_event(
+                        message.get("params").unwrap_or(&Value::Null),
+                        &mcp_items,
+                    ) {
+                        record_mcp_activity(&mut events, event);
+                    }
+                }
+                Some("item/completed") => {
+                    if let Some(event) =
+                        mcp_lifecycle_event(message.pointer("/params/item"), true, &mut mcp_items)
+                    {
+                        record_mcp_activity(&mut events, event);
+                    }
+                }
                 Some("thread/compaction/started") => events.compaction_started += 1,
                 Some("thread/compaction/completed") => events.compaction_completed += 1,
                 Some("turn/completed") => events.completed = true,
@@ -381,6 +435,113 @@ async fn burst_events_are_drained_without_blocking_the_runtime() {
     assert_eq!(events.deltas, 10_000);
     assert!(events.completed);
     connection.shutdown().await;
+}
+
+async fn mcp_activities_for(scenario: &str) -> Vec<ObservedMcpActivity> {
+    let (_fixture, mut connection) = spawn_fixture(scenario, None).await;
+    let thread_id = start_thread(&mut connection).await;
+    start_turn(&mut connection, &thread_id).await;
+    let events = drain_turn(&mut connection).await;
+    assert!(events.completed);
+    connection.shutdown().await;
+    events.mcp_activities
+}
+
+#[tokio::test]
+async fn external_mcp_success_updates_one_fennara_tool_card() {
+    let events = mcp_activities_for("authenticated").await;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].id, events[1].id);
+    assert_eq!(events[0].status, "running");
+    assert_eq!(events[1].status, "completed");
+    assert_eq!(events[1].name, "fennara · get_scene_tree");
+    assert!(events[1].arguments.contains("depth"));
+    assert!(events[1].content.contains("\"ok\": true"));
+}
+
+#[tokio::test]
+async fn external_mcp_error_is_visible_without_daemon_failure() {
+    let events = mcp_activities_for("tool-error").await;
+    let completed = events.last().expect("completed MCP activity");
+    assert_eq!(completed.status, "failed");
+    assert!(completed.content.contains("fixture Godot tool failed"));
+}
+
+#[tokio::test]
+async fn external_mcp_timeout_has_distinct_terminal_state() {
+    let scenario = format!("tool-{}{}", "time", "out");
+    let events = mcp_activities_for(&scenario).await;
+    let completed = events.last().expect("completed MCP activity");
+    assert_eq!(completed.status, "timed_out");
+    assert!(completed.content.contains("timed out"));
+}
+
+#[tokio::test]
+async fn external_mcp_progress_reuses_the_same_tool_card() {
+    let events = mcp_activities_for("tool-progress").await;
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].id, events[1].id);
+    assert_eq!(events[1].id, events[2].id);
+    assert_eq!(events[1].status, "running");
+    assert!(events[1].content.contains("fixture Godot tool progress"));
+    assert_eq!(events[2].status, "completed");
+}
+
+#[test]
+fn interrupted_external_mcp_activity_is_cancelled() {
+    let item = json!({
+        "id": "mcp-cancelled",
+        "type": "mcpToolCall",
+        "server": "fennara",
+        "tool": "get_scene_tree",
+        "status": "failed",
+        "arguments": {},
+        "result": null,
+        "error": { "message": "Godot tool interrupted by user" }
+    });
+    let mut states = HashMap::new();
+    let event = mcp_lifecycle_event(Some(&item), true, &mut states).unwrap();
+    let StreamEvent::ExternalToolActivity {
+        status, content, ..
+    } = event
+    else {
+        panic!("expected external MCP activity");
+    };
+    assert_eq!(status, "cancelled");
+    assert!(content.contains("interrupted"));
+}
+
+#[test]
+fn external_mcp_payload_is_bounded_and_omits_image_bytes() {
+    let item = json!({
+        "id": "mcp-large",
+        "type": "mcpToolCall",
+        "server": "fennara",
+        "tool": "capture_runtime_screenshot",
+        "status": "completed",
+        "arguments": { "note": "x".repeat(20_000) },
+        "result": {
+            "content": [
+                { "type": "text", "text": "y".repeat(80_000) },
+                { "type": "image", "mimeType": "image/png", "data": "z".repeat(100_000) }
+            ],
+            "structuredContent": null,
+            "_meta": null
+        },
+        "error": null
+    });
+    let mut states = HashMap::new();
+    let event = mcp_lifecycle_event(Some(&item), true, &mut states).unwrap();
+    let StreamEvent::ExternalToolActivity {
+        arguments, content, ..
+    } = event
+    else {
+        panic!("expected external MCP activity");
+    };
+    assert!(arguments.chars().count() <= MCP_ARGUMENT_LIMIT + 40);
+    assert!(content.chars().count() <= MCP_CONTENT_LIMIT + 40);
+    assert!(content.contains("Output truncated by Fennara"));
+    assert!(!content.contains(&"z".repeat(256)));
 }
 
 async fn wait_for_notification(connection: &mut CodexConnection, expected_method: &str) -> Value {

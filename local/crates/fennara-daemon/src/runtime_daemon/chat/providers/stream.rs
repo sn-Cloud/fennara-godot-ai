@@ -86,6 +86,13 @@ pub(crate) enum StreamEvent {
         message: String,
         raw: Option<String>,
     },
+    ExternalToolActivity {
+        id: String,
+        name: String,
+        arguments: String,
+        content: String,
+        status: String,
+    },
     Status {
         message: String,
     },
