@@ -302,6 +302,8 @@ mod tests {
             "codex_runtime_install_start",
             "codex_runtime_install_cancel",
             "codex_runtime_status",
+            "codex_mcp_setup",
+            "codex_mcp_setup_completed",
             "compatible_unverified",
             "Click the Codex provider again to cancel",
         ] {

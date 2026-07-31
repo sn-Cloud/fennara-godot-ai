@@ -190,6 +190,7 @@
   let codexRuntimePollTimer = 0;
   let codexRuntimeStatus = null;
   let codexRuntimeInstallRequested = false;
+  let codexMcpSetupRequested = false;
   let canRevert = false;
   let modelPicker = null;
   let providerPopovers = null;
@@ -1135,6 +1136,13 @@
       if (account.signing_in) {
         return "Waiting for browser login · click to cancel";
       }
+      const mcp = account.mcp || null;
+      if (mcp && !mcp.available) {
+        if (mcp.configured) {
+          return "Fennara MCP is unavailable · click to repair Godot tools";
+        }
+        return "Set up Fennara MCP for Godot tools";
+      }
       if (provider.connected) {
         const plan = String(account.plan_type || "").trim();
         const runtime = account.runtime || {};
@@ -1496,6 +1504,26 @@
       chooseProvider(provider.id);
       return;
     }
+    if (provider.account?.signing_in) {
+      appendSystem("Cancelling Codex ChatGPT login...");
+      send({
+        type: "codex_login_cancel",
+        request_id: nextRequestId("codex-login-cancel"),
+      });
+      return;
+    }
+    const mcp = provider.account?.mcp || null;
+    if (mcp && !mcp.available) {
+      codexMcpSetupRequested = !provider.connected;
+      appendSystem(mcp.configured
+        ? "Repairing Fennara MCP access for Codex..."
+        : "Setting up Fennara MCP access for Codex...");
+      send({
+        type: "codex_mcp_setup",
+        request_id: nextRequestId("codex-mcp-setup"),
+      });
+      return;
+    }
     if (!provider.connected) {
       const runtimeAvailable = provider.account?.installed !== false || codexRuntimeStatus?.installed;
       if (!runtimeAvailable) {
@@ -1521,14 +1549,6 @@
           request_id: nextRequestId("codex-runtime-install-start"),
         });
         startCodexRuntimePolling();
-        return;
-      }
-      if (provider.account?.signing_in) {
-        appendSystem("Cancelling Codex ChatGPT login...");
-        send({
-          type: "codex_login_cancel",
-          request_id: nextRequestId("codex-login-cancel"),
-        });
         return;
       }
       appendSystem("Starting Codex ChatGPT login...");
@@ -1706,6 +1726,23 @@
         markSettingsClean();
         clearSystemStatus();
       }
+      return;
+    }
+    if (message.type === "codex_mcp_setup_completed") {
+      const shouldStartLogin = codexMcpSetupRequested && !providerConnected("codex");
+      codexMcpSetupRequested = false;
+      appendSystem(message.warning || "Fennara MCP is ready for Codex Godot tools.");
+      requestCodexAccountStatus();
+      if (shouldStartLogin) {
+        send({
+          type: "codex_login_start",
+          request_id: nextRequestId("codex-login-after-mcp-setup"),
+        });
+      }
+      return;
+    }
+    if (message.type === "codex_mcp_status") {
+      requestCodexAccountStatus();
       return;
     }
     if (message.type === "codex_runtime_status") {
@@ -1958,6 +1995,10 @@
         codexRuntimeInstallRequested = false;
         stopCodexRuntimePolling();
         requestCodexRuntimeStatus();
+      }
+      if (requestId.startsWith("codex-mcp-setup")) {
+        codexMcpSetupRequested = false;
+        requestCodexAccountStatus();
       }
       if (requestId.startsWith("open-project-file")) {
         appendSystem(errorText);

@@ -303,6 +303,7 @@ dependencies = [
  "subtle",
  "sysinfo",
  "tokio",
+ "toml_edit",
 ]
 
 [[package]]
