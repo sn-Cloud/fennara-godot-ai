@@ -7,6 +7,7 @@ pub(crate) mod catalog_cache;
 mod codex;
 pub(crate) mod codex_app_server;
 mod context;
+mod control;
 pub(crate) mod custom;
 mod deepseek;
 mod error;
@@ -38,6 +39,9 @@ use request::LlmRequest;
 use stream::StreamEvent;
 use tokio::sync::Mutex;
 
+pub(crate) use control::{
+    ProviderApprovalDecision, ProviderApprovalKind, ProviderApprovalRequest, ProviderApprovalSender,
+};
 pub(crate) use error::LlmError;
 pub(crate) use request::build_messages;
 pub(crate) use stream::FinishReason;
@@ -425,6 +429,7 @@ pub(crate) async fn stream_chat<F, Fut>(
     settings: &ProviderSettings,
     request: &ChatRequest,
     trace: Option<TraceRecorder>,
+    approval_tx: Option<ProviderApprovalSender>,
     on_item: F,
 ) -> Result<ChatCompletion, LlmError>
 where
@@ -489,7 +494,7 @@ where
             .await?
         }
         types::AdapterKind::CodexAppServer => {
-            codex_app_server::stream_chat(&llm_request, {
+            codex_app_server::stream_chat(&llm_request, approval_tx, {
                 let accumulator = Arc::clone(&accumulator);
                 let on_item = Arc::clone(&on_item);
                 move |event| {

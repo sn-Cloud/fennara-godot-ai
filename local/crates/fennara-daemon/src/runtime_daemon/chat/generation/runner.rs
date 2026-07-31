@@ -502,6 +502,7 @@ where
             &current_assistant.id,
             state,
             &chat_id,
+            bound_project.session_id.clone(),
             scope.project_path.clone(),
             settings.approval_mode.as_str().to_string(),
             current_trace.clone(),
@@ -1397,6 +1398,7 @@ async fn try_create_context_summary(
             cwd: None,
             approval_mode: "ask".to_string(),
         },
+        None,
         None,
         move |item| {
             let usage_for_stream = Arc::clone(&usage_for_stream);

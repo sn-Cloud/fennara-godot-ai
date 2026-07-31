@@ -11,11 +11,16 @@ use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
     process::{Child, ChildStdin, ChildStdout, Command},
+    sync::oneshot,
     time::timeout,
 };
 
 use super::super::store;
 use super::{
+    control::{
+        ProviderApprovalDecision, ProviderApprovalKind, ProviderApprovalRequest,
+        ProviderApprovalSender,
+    },
     error::LlmError,
     request::LlmRequest,
     stream::{FinishReason, StreamEvent, Usage},
@@ -25,6 +30,7 @@ const PROVIDER_NAME: &str = "Codex";
 const INIT_TIMEOUT: Duration = Duration::from_secs(20);
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const APPROVAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CODEX_COMMAND_ENV: &str = "FENNARA_CODEX_COMMAND";
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -190,13 +196,14 @@ pub(crate) async fn logout() -> Result<CodexAccountStatus, String> {
 
 pub(crate) async fn stream_chat<F, Fut>(
     request: &LlmRequest,
+    approval_tx: Option<ProviderApprovalSender>,
     mut on_event: F,
 ) -> Result<(), LlmError>
 where
     F: FnMut(StreamEvent) -> Fut + Send,
     Fut: std::future::Future<Output = Result<bool, LlmError>> + Send,
 {
-    let mut connection = CodexConnection::spawn().await?;
+    let mut connection = CodexConnection::spawn_with_approvals(approval_tx).await?;
     let account = connection
         .request(
             "account/read",
@@ -238,6 +245,10 @@ where
             }
             .to_string(),
         ),
+    );
+    thread_params.insert(
+        "approvalsReviewer".to_string(),
+        Value::String("user".to_string()),
     );
     thread_params.insert(
         "sandbox".to_string(),
@@ -675,10 +686,17 @@ struct CodexConnection {
     stdin: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
     next_id: u64,
+    approval_tx: Option<ProviderApprovalSender>,
 }
 
 impl CodexConnection {
     async fn spawn() -> Result<Self, LlmError> {
+        Self::spawn_with_approvals(None).await
+    }
+
+    async fn spawn_with_approvals(
+        approval_tx: Option<ProviderApprovalSender>,
+    ) -> Result<Self, LlmError> {
         let mut command = codex_app_server_command()?;
         command
             .stdin(Stdio::piped())
@@ -702,6 +720,7 @@ impl CodexConnection {
             stdin,
             lines: BufReader::new(stdout).lines(),
             next_id: 1,
+            approval_tx,
         };
         connection
             .request(
@@ -712,7 +731,7 @@ impl CodexConnection {
                         "title": "Fennara Godot AI",
                         "version": env!("CARGO_PKG_VERSION")
                     },
-                    "capabilities": {}
+                    "capabilities": { "experimentalApi": true }
                 }),
                 INIT_TIMEOUT,
             )
@@ -797,9 +816,10 @@ impl CodexConnection {
         let Some(method) = message.get("method").and_then(Value::as_str) else {
             return Ok(false);
         };
+        let params = message.get("params").cloned().unwrap_or_else(|| json!({}));
         let result = match method {
             "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => {
-                json!({ "decision": "decline" })
+                self.request_approval(method, params).await?
             }
             "tool/requestUserInput" => json!({ "answers": {} }),
             "mcpServer/elicitation/request" => json!({ "action": "decline" }),
@@ -808,6 +828,40 @@ impl CodexConnection {
         self.write_json(&json!({ "id": id, "result": result }))
             .await?;
         Ok(true)
+    }
+
+    async fn request_approval(&mut self, method: &str, params: Value) -> Result<Value, LlmError> {
+        let kind = match method {
+            "item/commandExecution/requestApproval" => ProviderApprovalKind::CommandExecution,
+            "item/fileChange/requestApproval" => ProviderApprovalKind::FileChange,
+            _ => return Ok(json!({ "decision": "decline" })),
+        };
+        let Some(approval_tx) = self.approval_tx.clone() else {
+            return Ok(json!({ "decision": "decline" }));
+        };
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let request = ProviderApprovalRequest {
+            kind,
+            item_id: approval_item_id(&params),
+            thread_id: optional_string(&params, "threadId"),
+            turn_id: optional_string(&params, "turnId"),
+            summary: approval_summary(kind, &params),
+            details: params,
+            responder: decision_tx,
+        };
+        approval_tx
+            .send(request)
+            .map_err(|_| LlmError::ProviderApi {
+                provider: PROVIDER_NAME.to_string(),
+                status: None,
+                message: "Codex approval could not be delivered to the Fennara UI.".to_string(),
+                retryable: false,
+            })?;
+        let decision = match timeout(APPROVAL_TIMEOUT, decision_rx).await {
+            Ok(Ok(decision)) => decision,
+            Ok(Err(_)) | Err(_) => ProviderApprovalDecision::Denied,
+        };
+        Ok(approval_result(decision))
     }
 
     async fn interrupt_turn(&mut self, thread_id: &str) {
@@ -849,6 +903,64 @@ impl CodexConnection {
         let _ = self.child.kill().await;
         let _ = self.child.wait().await;
     }
+}
+
+fn optional_string(value: &Value, key: &str) -> Option<String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn approval_item_id(params: &Value) -> String {
+    optional_string(params, "itemId")
+        .or_else(|| optional_string(params, "approvalId"))
+        .unwrap_or_else(|| "codex-approval-item".to_string())
+}
+
+fn approval_summary(kind: ProviderApprovalKind, params: &Value) -> String {
+    if let Some(reason) = optional_string(params, "reason") {
+        return reason;
+    }
+    match kind {
+        ProviderApprovalKind::CommandExecution => params
+            .get("command")
+            .map(display_json_value)
+            .filter(|value| !value.is_empty())
+            .map(|command| format!("Run command: {command}"))
+            .unwrap_or_else(|| "Allow Codex to run this command?".to_string()),
+        ProviderApprovalKind::FileChange => params
+            .get("grantRoot")
+            .and_then(Value::as_str)
+            .map(|root| format!("Allow Codex to modify files under {root}?"))
+            .unwrap_or_else(|| "Allow Codex to apply these file changes?".to_string()),
+    }
+}
+
+fn display_json_value(value: &Value) -> String {
+    match value {
+        Value::String(value) => value.clone(),
+        Value::Array(values) => values
+            .iter()
+            .map(display_json_value)
+            .filter(|value| !value.is_empty())
+            .collect::<Vec<_>>()
+            .join(" "),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+fn approval_result(decision: ProviderApprovalDecision) -> Value {
+    json!({
+        "decision": match decision {
+            ProviderApprovalDecision::Approved => "accept",
+            ProviderApprovalDecision::Denied => "decline",
+            ProviderApprovalDecision::Cancelled => "cancel",
+        }
+    })
 }
 
 fn rpc_error(error: &Value) -> LlmError {
@@ -968,6 +1080,40 @@ mod tests {
             message: "Permission denied".to_string(),
             retryable: false,
         }));
+    }
+
+    #[test]
+    fn approval_results_use_codex_v2_decisions() {
+        assert_eq!(
+            approval_result(ProviderApprovalDecision::Approved),
+            json!({ "decision": "accept" })
+        );
+        assert_eq!(
+            approval_result(ProviderApprovalDecision::Denied),
+            json!({ "decision": "decline" })
+        );
+        assert_eq!(
+            approval_result(ProviderApprovalDecision::Cancelled),
+            json!({ "decision": "cancel" })
+        );
+    }
+
+    #[test]
+    fn command_approval_summary_prefers_reason_then_command() {
+        assert_eq!(
+            approval_summary(
+                ProviderApprovalKind::CommandExecution,
+                &json!({ "command": ["cargo", "test"] })
+            ),
+            "Run command: cargo test"
+        );
+        assert_eq!(
+            approval_summary(
+                ProviderApprovalKind::CommandExecution,
+                &json!({ "reason": "Run the test suite", "command": "cargo test" })
+            ),
+            "Run the test suite"
+        );
     }
 
     #[test]
