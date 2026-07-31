@@ -229,6 +229,10 @@ fn executable_names(platform: CodexRuntimePlatform) -> &'static [&'static str] {
     }
 }
 
+fn windows_app_server_command_line(executable: &Path) -> String {
+    format!("\"\"{}\" app-server --stdio\"", executable.display())
+}
+
 #[cfg(windows)]
 fn platform_app_server_command(runtime: &CodexRuntimeSpec) -> Result<Command, LlmError> {
     let extension = runtime
@@ -239,10 +243,9 @@ fn platform_app_server_command(runtime: &CodexRuntimeSpec) -> Result<Command, Ll
         .to_ascii_lowercase();
     if matches!(extension.as_str(), "cmd" | "bat") {
         let mut command = Command::new("cmd.exe");
-        command.args(["/D", "/S", "/C"]).arg(format!(
-            "\"{}\" app-server --stdio",
-            runtime.executable.display()
-        ));
+        command
+            .args(["/D", "/S", "/C"])
+            .arg(windows_app_server_command_line(&runtime.executable));
         return Ok(command);
     }
     let mut command = Command::new(&runtime.executable);
@@ -315,6 +318,18 @@ mod tests {
             CodexCompatibility::CompatibleUnverified
         );
         assert_eq!(compatibility_for_version(None), CodexCompatibility::Unknown);
+    }
+
+    #[test]
+    fn windows_batch_command_line_uses_cmd_outer_quotes() {
+        let command =
+            windows_app_server_command_line(Path::new("C:/Program Files/Codex/codex.cmd"));
+        assert!(command.starts_with("\"\""), "{command}");
+        assert!(
+            command.contains("codex.cmd\" app-server --stdio"),
+            "{command}"
+        );
+        assert!(command.ends_with("--stdio\""), "{command}");
     }
 
     #[test]

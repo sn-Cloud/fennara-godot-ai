@@ -306,6 +306,25 @@ async fn compaction_events_do_not_break_thread_completion() {
 }
 
 #[tokio::test]
+async fn multiple_app_server_sessions_are_isolated() {
+    let (_first_fixture, mut first) = spawn_fixture("authenticated", None).await;
+    let (_second_fixture, mut second) = spawn_fixture("authenticated", None).await;
+    let first_thread = start_thread(&mut first).await;
+    let second_thread = start_thread(&mut second).await;
+    assert_ne!(first_thread, second_thread);
+    start_turn(&mut first, &first_thread).await;
+    start_turn(&mut second, &second_thread).await;
+    let (first_events, second_events) =
+        tokio::join!(drain_turn(&mut first), drain_turn(&mut second));
+    assert!(first_events.completed);
+    assert!(second_events.completed);
+    assert_eq!(first_events.deltas, 1);
+    assert_eq!(second_events.deltas, 1);
+    first.shutdown().await;
+    second.shutdown().await;
+}
+
+#[tokio::test]
 async fn invalid_json_is_reported_as_provider_output_error() {
     let (_fixture, mut connection) = spawn_fixture("invalid-json-turn", None).await;
     let thread_id = start_thread(&mut connection).await;

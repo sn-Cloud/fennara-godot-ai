@@ -965,6 +965,42 @@ pub(crate) fn parse_model_ref(model: &str) -> Result<String, LlmError> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn burst_text_events_are_coalesced_before_ui_delivery() {
+        let mut accumulator = StreamAccumulator::default();
+        let mut intermediate_updates = 0usize;
+        for _ in 0..10_000 {
+            intermediate_updates += accumulator
+                .items_for_event(StreamEvent::TextDelta {
+                    id: "codex-agent".to_string(),
+                    text: "x".to_string(),
+                })
+                .unwrap()
+                .len();
+        }
+        let final_items = accumulator
+            .items_for_event(StreamEvent::Finish {
+                reason: FinishReason::Stop,
+                usage: None,
+            })
+            .unwrap();
+        assert!(
+            intermediate_updates <= 417,
+            "10,000 byte deltas produced {intermediate_updates} UI updates"
+        );
+        let final_text = final_items
+            .iter()
+            .find_map(|item| match item {
+                StreamItem::Text {
+                    content,
+                    done: true,
+                } => Some(content),
+                _ => None,
+            })
+            .expect("final coalesced text item");
+        assert_eq!(final_text.len(), 10_000);
+    }
+
     fn custom_provider_config() -> custom::CustomProviderConfig {
         custom::CustomProviderConfig {
             id: "omniroute".to_string(),
