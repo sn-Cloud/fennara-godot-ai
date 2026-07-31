@@ -30,14 +30,26 @@ jobs:
 
       - name: Apply embedded UI coalescing
         run: |
-          python3 -m py_compile .github/scripts/apply_codex_ui_coalescing.py
+          python3 -m py_compile \
+            .github/scripts/apply_codex_ui_coalescing.py \
+            .github/scripts/fix_codex_ui_coalescing_indent.py
           python3 .github/scripts/apply_codex_ui_coalescing.py
+          python3 .github/scripts/fix_codex_ui_coalescing_indent.py
 
       - name: Run transcript renderer coalescing test
         run: node ui/chat/tests/transcript-renderer-coalescing.test.js
 
       - name: Verify packaged UI matches source
         run: cmp ui/chat/transcript-renderer.js godot_demo/addons/fennara/dist/transcript-renderer.js
+
+      - name: Verify renderer indentation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          text = Path("ui/chat/transcript-renderer.js").read_text(encoding="utf-8")
+          assert "\n    function updateToolCall(item) {\n" in text
+          assert "\nfunction updateToolCall(item) {\n" not in text
+          PY
 
       - name: Run full Rust workspace tests
         working-directory: local
