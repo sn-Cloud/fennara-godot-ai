@@ -9,12 +9,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: codex-provider-phase7
+  group: codex-provider-phase7-linux
   cancel-in-progress: false
 
 jobs:
-  windows-runtime:
-    runs-on: windows-latest
+  runtime-and-pressure:
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout development branch
@@ -35,20 +35,21 @@ jobs:
         working-directory: local
         run: cargo fmt --all
 
-      - name: Test daemon on Windows
+      - name: Test daemon and event pressure
         working-directory: local
         run: cargo test --locked -p fennara-daemon
 
       - name: Remove one-time migration files
-        shell: pwsh
+        shell: bash
         run: |
-          Remove-Item .github/scripts/apply_codex_provider_phase7.py -ErrorAction SilentlyContinue
-          Remove-Item .github/workflows/codex-provider-phase7.yml -ErrorAction SilentlyContinue
-          Remove-Item .github/codex-provider-phase7.trigger -ErrorAction SilentlyContinue
+          rm -f .github/scripts/apply_codex_provider_phase7.py
+          rm -f .github/workflows/codex-provider-phase7.yml
+          rm -f .github/codex-provider-phase7.trigger
 
       - name: Commit verified changes
-        shell: pwsh
+        shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
