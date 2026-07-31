@@ -29,7 +29,12 @@ jobs:
           fetch-depth: 0
 
       - name: Apply ownership changes
-        run: python3 .github/scripts/apply_codex_ownership.py
+        run: |
+          python3 -m py_compile \
+            .github/scripts/apply_codex_ownership.py \
+            .github/scripts/fix_codex_ownership_escape.py
+          python3 .github/scripts/apply_codex_ownership.py
+          python3 .github/scripts/fix_codex_ownership_escape.py
 
       - name: Format Rust changes
         working-directory: local
