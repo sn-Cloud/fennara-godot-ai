@@ -36,6 +36,7 @@ jobs:
           sed -i 's/    expected=2,/    expected=1,/' .github/scripts/apply_codex_provider_phase1.py
           python .github/scripts/apply_codex_provider_phase1.py
           python -c "from pathlib import Path; p=Path('local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs'); s=p.read_text(encoding='utf-8'); n=chr(10); old='        max_output_tokens: None,'+n+'        cwd: None,'+n+'        approval_mode: \"ask\".to_string(),'; new='        max_output_tokens: None,'+n+'        chat_id: None,'+n+'        cwd: None,'+n+'        approval_mode: \"ask\".to_string(),'; count=s.count(old); assert count == 1, f'expected one remaining ChatRequest constructor, found {count}'; p.write_text(s.replace(old,new,1), encoding='utf-8', newline=n)"
+          python .github/scripts/fix_codex_chat_id_initializers.py
 
       - name: Format Rust
         working-directory: local
@@ -64,6 +65,7 @@ jobs:
         shell: bash
         run: |
           rm -f .github/scripts/apply_codex_provider_phase1.py
+          rm -f .github/scripts/fix_codex_chat_id_initializers.py
           rm -f .github/workflows/codex-provider-development.yml
           rm -f .github/codex-provider-phase1.trigger
 
