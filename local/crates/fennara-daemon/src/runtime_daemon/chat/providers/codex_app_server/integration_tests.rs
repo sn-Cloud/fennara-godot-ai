@@ -247,10 +247,10 @@ async fn drain_turn(connection: &mut CodexConnection) -> TurnEvents {
 async fn fixture_initializes_and_reads_chatgpt_account() {
     let (_fixture, mut connection) = spawn_fixture("authenticated", None).await;
     let runtime = connection.runtime.as_ref().expect("runtime metadata");
-    assert_eq!(runtime.version.as_deref(), Some("0.0.0-fake"));
+    assert_eq!(runtime.version.as_deref(), Some("0.144.4"));
     assert_eq!(
         runtime.compatibility,
-        codex_runtime::CodexCompatibility::CompatibleUnverified
+        codex_runtime::CodexCompatibility::Tested
     );
 
     let account = connection
@@ -542,6 +542,61 @@ fn external_mcp_payload_is_bounded_and_omits_image_bytes() {
     assert!(content.chars().count() <= MCP_CONTENT_LIMIT + 40);
     assert!(content.contains("Output truncated by Fennara"));
     assert!(!content.contains(&"z".repeat(256)));
+}
+
+#[tokio::test]
+async fn older_runtime_is_rejected_before_initialized_notification() {
+    let fixture = fixture_runtime("older-runtime");
+    let result = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("older runtime validation timed out");
+    let error = match result {
+        Ok(mut connection) => {
+            connection.shutdown().await;
+            panic!("older runtime should be rejected");
+        }
+        Err(error) => error,
+    };
+    let message = error.user_message();
+    assert!(message.contains(codex_runtime::MINIMUM_CODEX_VERSION));
+    assert!(message.contains(codex_runtime::PINNED_CODEX_VERSION));
+}
+
+#[tokio::test]
+async fn newer_runtime_is_allowed_but_marked_unverified() {
+    let (_fixture, mut connection) = spawn_fixture("newer-runtime", None).await;
+    let runtime = connection.runtime.as_ref().expect("runtime metadata");
+    assert_eq!(runtime.version.as_deref(), Some("0.145.0"));
+    assert_eq!(
+        runtime.compatibility,
+        codex_runtime::CodexCompatibility::CompatibleUnverified
+    );
+    assert!(runtime.compatibility_error.is_none());
+    connection.shutdown().await;
+}
+
+#[tokio::test]
+async fn missing_required_initialize_field_is_rejected() {
+    let fixture = fixture_runtime("malformed-initialize");
+    let result = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("initialize structure validation timed out");
+    let error = match result {
+        Ok(mut connection) => {
+            connection.shutdown().await;
+            panic!("incomplete initialize response should be rejected");
+        }
+        Err(error) => error,
+    };
+    let message = error.user_message();
+    assert!(message.contains("platformOs"));
+    assert!(message.contains(codex_runtime::PINNED_CODEX_VERSION));
 }
 
 async fn wait_for_notification(connection: &mut CodexConnection, expected_method: &str) -> Value {

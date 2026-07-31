@@ -1069,7 +1069,7 @@ impl CodexConnection {
         connection.runtime = Some(codex_runtime::metadata_from_initialize(
             &runtime_spec,
             &initialize,
-        ));
+        )?);
         connection
             .send_notification("initialized", json!({}))
             .await?;
@@ -1468,6 +1468,8 @@ mod tests {
             version: Some(codex_runtime::PINNED_CODEX_VERSION.to_string()),
             compatibility: codex_runtime::CodexCompatibility::Tested,
             pinned_version: codex_runtime::PINNED_CODEX_VERSION,
+            minimum_version: codex_runtime::MINIMUM_CODEX_VERSION,
+            compatibility_error: None,
             source: codex_runtime::CodexRuntimeSource::Path,
             platform: codex_runtime::CodexRuntimePlatform::Linux,
             codex_home: Some("/tmp/codex".to_string()),

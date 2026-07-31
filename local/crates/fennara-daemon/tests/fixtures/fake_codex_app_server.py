@@ -54,7 +54,8 @@ def read_json_line() -> dict[str, Any] | None:
 @dataclass
 class Scenario:
     name: str = "authenticated"
-    version: str = "0.0.0-fake"
+    version: str = "0.144.4"
+    initialize_shape: str = "valid"
     authenticated: bool = True
     plan_type: str = "plus"
     email: str = "fixture@example.invalid"
@@ -97,6 +98,9 @@ class Scenario:
             "invalid-json-turn": {"invalid_json_at": "turn"},
             "burst": {"burst_deltas": 10_000},
             "unknown-events": {"unknown_events": True},
+            "older-runtime": {"version": "0.100.0"},
+            "newer-runtime": {"version": "0.145.0"},
+            "malformed-initialize": {"initialize_shape": "missing-platform"},
             "tool-progress": {"tool_progress": True},
             "tool-error": {"tool_result": "error"},
             "tool-timeout": {"tool_result": "timeout"},
@@ -113,6 +117,26 @@ class FakeCodexAppServer:
         self.login_id: str | None = None
         self.active_thread_id: str | None = None
         self.pending_server_requests: dict[str, str] = {}
+
+    def initialize_result(self) -> dict[str, Any]:
+        if sys.platform.startswith("win"):
+            platform_os = "windows"
+            platform_family = "windows"
+        elif sys.platform == "darwin":
+            platform_os = "macos"
+            platform_family = "unix"
+        else:
+            platform_os = "linux"
+            platform_family = "unix"
+        result = {
+            "userAgent": f"codex/{self.scenario.version} fake-fixture",
+            "codexHome": os.environ.get("CODEX_HOME", str(Path.home() / ".codex")),
+            "platformFamily": platform_family,
+            "platformOs": platform_os,
+        }
+        if self.scenario.initialize_shape == "missing-platform":
+            result.pop("platformOs")
+        return result
 
     def maybe_delay(self) -> None:
         if self.scenario.delay_ms > 0:
@@ -143,13 +167,7 @@ class FakeCodexAppServer:
             self.initialized = True
             response(
                 message_id,
-                {
-                    "userAgent": f"codex/{self.scenario.version} fake-fixture",
-                    "capabilities": {
-                        "threadResume": True,
-                        "accountLoginCancel": True,
-                    },
-                },
+                self.initialize_result(),
             )
             return
 

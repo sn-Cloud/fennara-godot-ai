@@ -10,6 +10,7 @@ use tokio::process::Command;
 use super::{codex_managed_runtime, error::LlmError};
 
 pub(crate) const PINNED_CODEX_VERSION: &str = "0.144.4";
+pub(crate) const MINIMUM_CODEX_VERSION: &str = "0.144.0";
 pub(crate) const CODEX_COMMAND_ENV: &str = "FENNARA_CODEX_COMMAND";
 pub(crate) const FENNARA_CODEX_HOME_ENV: &str = "FENNARA_CODEX_HOME";
 pub(crate) const CODEX_HOME_ENV: &str = "CODEX_HOME";
@@ -47,7 +48,7 @@ pub(crate) enum CodexRuntimeSource {
 pub(crate) enum CodexCompatibility {
     Tested,
     CompatibleUnverified,
-    Unknown,
+    Incompatible,
 }
 
 #[derive(Clone, Debug)]
@@ -63,6 +64,8 @@ pub(crate) struct CodexRuntimeMetadata {
     pub(crate) version: Option<String>,
     pub(crate) compatibility: CodexCompatibility,
     pub(crate) pinned_version: &'static str,
+    pub(crate) minimum_version: &'static str,
+    pub(crate) compatibility_error: Option<String>,
     pub(crate) source: CodexRuntimeSource,
     pub(crate) platform: CodexRuntimePlatform,
     pub(crate) codex_home: Option<String>,
@@ -139,38 +142,56 @@ pub(crate) fn build_app_server_command(runtime: &CodexRuntimeSpec) -> Result<Com
 pub(crate) fn metadata_from_initialize(
     runtime: &CodexRuntimeSpec,
     initialize: &serde_json::Value,
-) -> CodexRuntimeMetadata {
-    let user_agent = initialize
-        .get("userAgent")
-        .and_then(serde_json::Value::as_str);
-    let version = user_agent.and_then(parse_codex_version);
-    let compatibility = compatibility_for_version(version.as_deref());
-    let codex_home = initialize
-        .get("codexHome")
-        .and_then(serde_json::Value::as_str)
-        .map(ToString::to_string)
-        .or_else(|| {
-            runtime
-                .codex_home
-                .as_ref()
-                .map(|path| path.display().to_string())
-        });
-    CodexRuntimeMetadata {
-        version,
+) -> Result<CodexRuntimeMetadata, LlmError> {
+    let user_agent = required_initialize_string(initialize, "userAgent")?;
+    let codex_home = required_initialize_string(initialize, "codexHome")?;
+    let platform_family = required_initialize_string(initialize, "platformFamily")?;
+    let platform_os = required_initialize_string(initialize, "platformOs")?;
+    if platform_os != runtime.platform.as_str() {
+        return Err(provider_init(format!(
+            "Codex app-server reported platform {platform_os}, but Fennara started it for {}.",
+            runtime.platform.as_str()
+        )));
+    }
+    let version = parse_codex_version(&user_agent).ok_or_else(|| {
+        provider_init(format!(
+            "Codex app-server returned an unrecognized userAgent: {user_agent}. Install the tested Codex {PINNED_CODEX_VERSION} runtime."
+        ))
+    })?;
+    let compatibility = compatibility_for_version(Some(&version));
+    let compatibility_error = compatibility_error(&version, compatibility);
+    if let Some(error) = compatibility_error.as_ref() {
+        return Err(provider_init(error.clone()));
+    }
+    Ok(CodexRuntimeMetadata {
+        version: Some(version),
         compatibility,
         pinned_version: PINNED_CODEX_VERSION,
+        minimum_version: MINIMUM_CODEX_VERSION,
+        compatibility_error,
         source: runtime.source,
         platform: runtime.platform,
-        codex_home,
-        server_platform_family: initialize
-            .get("platformFamily")
-            .and_then(serde_json::Value::as_str)
-            .map(ToString::to_string),
-        server_platform_os: initialize
-            .get("platformOs")
-            .and_then(serde_json::Value::as_str)
-            .map(ToString::to_string),
-    }
+        codex_home: Some(codex_home),
+        server_platform_family: Some(platform_family),
+        server_platform_os: Some(platform_os),
+    })
+}
+
+fn required_initialize_string(
+    initialize: &serde_json::Value,
+    field: &str,
+) -> Result<String, LlmError> {
+    initialize
+        .get(field)
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            provider_init(format!(
+                "Codex app-server initialize response is missing required field {field}. Install the tested Codex {PINNED_CODEX_VERSION} runtime."
+            ))
+        })
 }
 
 pub(crate) fn parse_codex_version(user_agent: &str) -> Option<String> {
@@ -185,11 +206,35 @@ pub(crate) fn parse_codex_version(user_agent: &str) -> Option<String> {
 }
 
 pub(crate) fn compatibility_for_version(version: Option<&str>) -> CodexCompatibility {
-    match version {
-        Some(version) if version == PINNED_CODEX_VERSION => CodexCompatibility::Tested,
-        Some(_) => CodexCompatibility::CompatibleUnverified,
-        None => CodexCompatibility::Unknown,
+    let Some(version) = version.and_then(parse_version_tuple) else {
+        return CodexCompatibility::Incompatible;
+    };
+    let pinned = parse_version_tuple(PINNED_CODEX_VERSION).expect("pinned Codex version");
+    let minimum = parse_version_tuple(MINIMUM_CODEX_VERSION).expect("minimum Codex version");
+    if version == pinned {
+        CodexCompatibility::Tested
+    } else if version >= minimum {
+        CodexCompatibility::CompatibleUnverified
+    } else {
+        CodexCompatibility::Incompatible
     }
+}
+
+fn compatibility_error(version: &str, compatibility: CodexCompatibility) -> Option<String> {
+    (compatibility == CodexCompatibility::Incompatible).then(|| {
+        format!(
+            "Codex {version} is older than the minimum supported version {MINIMUM_CODEX_VERSION}. Install the tested Codex {PINNED_CODEX_VERSION} runtime."
+        )
+    })
+}
+
+fn parse_version_tuple(version: &str) -> Option<(u64, u64, u64)> {
+    let core = version.split_once('-').map_or(version, |(core, _)| core);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
 }
 
 fn configured_codex_home() -> Result<Option<PathBuf>, LlmError> {
@@ -334,7 +379,19 @@ mod tests {
             compatibility_for_version(Some("0.145.0-alpha.13")),
             CodexCompatibility::CompatibleUnverified
         );
-        assert_eq!(compatibility_for_version(None), CodexCompatibility::Unknown);
+        assert_eq!(
+            compatibility_for_version(Some(MINIMUM_CODEX_VERSION)),
+            CodexCompatibility::CompatibleUnverified
+        );
+        assert_eq!(
+            compatibility_for_version(Some("0.143.99")),
+            CodexCompatibility::Incompatible
+        );
+        assert_eq!(
+            compatibility_for_version(None),
+            CodexCompatibility::Incompatible
+        );
+        assert_eq!(parse_version_tuple("0.145.0-alpha.13"), Some((0, 145, 0)));
     }
 
     #[test]
