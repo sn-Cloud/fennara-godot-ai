@@ -29,7 +29,10 @@ jobs:
           components: rustfmt
 
       - name: Apply phase-three changes
-        run: python .github/scripts/apply_codex_provider_phase3.py
+        shell: bash
+        run: |
+          python .github/scripts/apply_codex_provider_phase3.py
+          python .github/scripts/fix_codex_provider_phase3.py
 
       - name: Format Rust
         working-directory: local
@@ -43,6 +46,7 @@ jobs:
         shell: bash
         run: |
           rm -f .github/scripts/apply_codex_provider_phase3.py
+          rm -f .github/scripts/fix_codex_provider_phase3.py
           rm -f .github/workflows/codex-provider-phase3.yml
           rm -f .github/codex-provider-phase3.trigger
 
