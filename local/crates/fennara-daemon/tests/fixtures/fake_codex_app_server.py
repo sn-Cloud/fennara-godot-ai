@@ -117,6 +117,40 @@ class FakeCodexAppServer:
         self.login_id: str | None = None
         self.active_thread_id: str | None = None
         self.pending_server_requests: dict[str, str] = {}
+        self.codex_home = Path(
+            os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
+        )
+        self.state_path = self.codex_home / "fake-thread-state.json"
+        self.request_log_path = self.codex_home / "fake-request-log.jsonl"
+        self.load_state()
+
+    def load_state(self) -> None:
+        if not self.state_path.is_file():
+            return
+        raw = json.loads(self.state_path.read_text(encoding="utf-8"))
+        threads = raw.get("threads")
+        if isinstance(threads, dict):
+            self.scenario.threads = threads
+
+    def save_state(self) -> None:
+        self.codex_home.mkdir(parents=True, exist_ok=True)
+        temporary = self.state_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"threads": self.scenario.threads}, separators=(",", ":")),
+            encoding="utf-8",
+        )
+        temporary.replace(self.state_path)
+
+    def log_client_request(self, method: str, params: dict[str, Any]) -> None:
+        self.codex_home.mkdir(parents=True, exist_ok=True)
+        with self.request_log_path.open("a", encoding="utf-8") as log:
+            log.write(
+                json.dumps(
+                    {"method": method, "params": params},
+                    separators=(",", ":"),
+                )
+                + "\n"
+            )
 
     def initialize_result(self) -> dict[str, Any]:
         if sys.platform.startswith("win"):
@@ -155,6 +189,9 @@ class FakeCodexAppServer:
         message_id = message.get("id")
         method = message.get("method")
         params = message.get("params") or {}
+
+        if method is not None:
+            self.log_client_request(str(method), params)
 
         if method is None and message_id in self.pending_server_requests:
             self.pending_server_requests.pop(str(message_id), None)
@@ -271,6 +308,7 @@ class FakeCodexAppServer:
             thread_id = f"thread-{uuid.uuid4()}"
             self.active_thread_id = thread_id
             self.scenario.threads[thread_id] = {"turns": 0, "compacted": False}
+            self.save_state()
             response(message_id, self.thread_result(thread_id, params))
             notification("thread/started", {"thread": {"id": thread_id}})
             return
@@ -283,8 +321,10 @@ class FakeCodexAppServer:
             if self.scenario.thread_resume == "permission-denied":
                 error(message_id, "Permission denied while opening thread")
                 return
+            if thread_id not in self.scenario.threads:
+                error(message_id, "Thread does not exist")
+                return
             self.active_thread_id = thread_id
-            self.scenario.threads.setdefault(thread_id, {"turns": 0, "compacted": False})
             response(message_id, self.thread_result(thread_id, params))
             return
 
@@ -297,6 +337,9 @@ class FakeCodexAppServer:
             thread_id = str(params.get("threadId") or self.active_thread_id or "")
             if not thread_id:
                 error(message_id, "threadId is required", -32602)
+                return
+            if thread_id not in self.scenario.threads:
+                error(message_id, "Thread does not exist")
                 return
             turn_id = f"turn-{uuid.uuid4()}"
             response(message_id, {"turn": {"id": turn_id}})
@@ -341,6 +384,7 @@ class FakeCodexAppServer:
             notification("thread/compaction/started", {"threadId": thread_id})
             notification("thread/compaction/completed", {"threadId": thread_id})
             self.scenario.threads[thread_id]["compacted"] = True
+            self.save_state()
 
         if self.scenario.approval in {"command", "file"}:
             method = (
@@ -434,6 +478,7 @@ class FakeCodexAppServer:
             return
 
         self.scenario.threads[thread_id]["turns"] += 1
+        self.save_state()
         notification(
             "turn/completed",
             {

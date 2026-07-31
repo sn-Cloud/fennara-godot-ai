@@ -706,15 +706,20 @@ fn latest_user_prompt(messages: &[Value]) -> String {
         .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
         .map(|message| message_content(message.get("content")))
         .filter(|content| !content.trim().is_empty())
-        .unwrap_or_else(|| prompt_from_messages(messages))
+        .unwrap_or_default()
 }
 
 fn is_missing_thread_error(error: &LlmError) -> bool {
     let message = error.user_message().to_ascii_lowercase();
-    message.contains("thread")
-        && (message.contains("not found")
-            || message.contains("does not exist")
-            || message.contains("missing"))
+    [
+        "thread not found",
+        "thread does not exist",
+        "thread no longer exists",
+        "no thread found",
+        "unknown thread",
+    ]
+    .iter()
+    .any(|pattern| message.contains(pattern))
 }
 
 fn prompt_from_messages(messages: &[Value]) -> String {

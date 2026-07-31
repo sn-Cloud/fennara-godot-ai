@@ -42,13 +42,15 @@ fn fixture_runtime(scenario: &str) -> FixtureRuntime {
         fixture.display()
     );
     let executable = write_fixture_launcher(&root, scenario, &fixture);
+    let codex_home = root.join("codex-home");
+    fs::create_dir_all(&codex_home).expect("create fixture CODEX_HOME");
     FixtureRuntime {
         root,
         spec: codex_runtime::CodexRuntimeSpec {
             executable,
             source: codex_runtime::CodexRuntimeSource::Configured,
             platform: test_platform(),
-            codex_home: None,
+            codex_home: Some(codex_home),
         },
     }
 }
@@ -142,18 +144,35 @@ async fn start_thread(connection: &mut CodexConnection) -> String {
         .to_string()
 }
 
-async fn start_turn(connection: &mut CodexConnection, thread_id: &str) {
+async fn start_turn_with_text(connection: &mut CodexConnection, thread_id: &str, text: &str) {
     connection
         .request(
             "turn/start",
             json!({
                 "threadId": thread_id,
-                "input": [{ "type": "text", "text": "test turn" }]
+                "input": [{ "type": "text", "text": text }]
             }),
             TEST_TIMEOUT,
         )
         .await
         .expect("turn/start failed");
+}
+
+async fn start_turn(connection: &mut CodexConnection, thread_id: &str) {
+    start_turn_with_text(connection, thread_id, "test turn").await;
+}
+
+fn fixture_request_log(fixture: &FixtureRuntime) -> Vec<Value> {
+    let path = fixture
+        .root
+        .join("codex-home")
+        .join("fake-request-log.jsonl");
+    let Ok(raw) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    raw.lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -287,7 +306,7 @@ async fn fixture_starts_and_resumes_threads() {
 
 #[tokio::test]
 async fn missing_thread_resume_is_classified_without_history_replay() {
-    let (_fixture, mut connection) = spawn_fixture("resume-missing", None).await;
+    let (fixture, mut connection) = spawn_fixture("resume-missing", None).await;
     let error = connection
         .request(
             "thread/resume",
@@ -297,6 +316,34 @@ async fn missing_thread_resume_is_classified_without_history_replay() {
         .await
         .expect_err("missing thread should fail");
     assert!(is_missing_thread_error(&error));
+    connection.shutdown().await;
+
+    let requests = fixture_request_log(&fixture);
+    assert!(
+        requests.iter().any(|request| {
+            request.get("method").and_then(Value::as_str) == Some("thread/resume")
+        })
+    );
+    assert!(!requests.iter().any(|request| {
+        matches!(
+            request.get("method").and_then(Value::as_str),
+            Some("thread/start" | "turn/start")
+        )
+    }));
+}
+
+#[tokio::test]
+async fn non_missing_resume_error_is_not_reclassified() {
+    let (_fixture, mut connection) = spawn_fixture("resume-permission-denied", None).await;
+    let error = connection
+        .request(
+            "thread/resume",
+            json!({ "threadId": "existing-thread" }),
+            TEST_TIMEOUT,
+        )
+        .await
+        .expect_err("permission denied resume should fail");
+    assert!(!is_missing_thread_error(&error));
     connection.shutdown().await;
 }
 
@@ -357,6 +404,181 @@ async fn compaction_events_do_not_break_thread_completion() {
     assert_eq!(events.compaction_completed, 1);
     assert!(events.completed);
     connection.shutdown().await;
+}
+
+#[tokio::test]
+async fn compacted_thread_resumes_after_app_server_restart() {
+    let fixture = fixture_runtime("compaction");
+    let mut first = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("first fixture initialize timed out")
+    .expect("first fixture initialize failed");
+    let thread_id = start_thread(&mut first).await;
+    start_turn_with_text(&mut first, &thread_id, "before compaction").await;
+    let first_events = drain_turn(&mut first).await;
+    assert_eq!(first_events.compaction_completed, 1);
+    first.shutdown().await;
+
+    let mut restarted = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("restarted fixture initialize timed out")
+    .expect("restarted fixture initialize failed");
+    let resumed = restarted
+        .request(
+            "thread/resume",
+            json!({ "threadId": thread_id.clone() }),
+            TEST_TIMEOUT,
+        )
+        .await
+        .expect("thread/resume after restart failed");
+    assert_eq!(
+        resumed.pointer("/thread/id").and_then(Value::as_str),
+        Some(thread_id.as_str())
+    );
+    start_turn_with_text(&mut restarted, &thread_id, "after daemon restart").await;
+    let resumed_events = drain_turn(&mut restarted).await;
+    assert_eq!(resumed_events.compaction_completed, 1);
+    assert!(resumed_events.completed);
+    restarted.shutdown().await;
+
+    let requests = fixture_request_log(&fixture);
+    let turns = requests
+        .iter()
+        .filter(|request| request.get("method").and_then(Value::as_str) == Some("turn/start"))
+        .collect::<Vec<_>>();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(
+        turns[1].pointer("/params/input/0/text"),
+        Some(&json!("after daemon restart"))
+    );
+}
+
+#[tokio::test]
+async fn resumed_turn_protocol_uses_only_latest_user_input() {
+    let messages = vec![
+        json!({ "role": "system", "content": "local system context" }),
+        json!({ "role": "user", "content": "old user input must not replay" }),
+        json!({ "role": "assistant", "content": "old assistant response" }),
+        json!({
+            "role": "user",
+            "content": [{ "type": "text", "text": "latest user input" }]
+        }),
+    ];
+    let prompt = latest_user_prompt(&messages);
+    assert_eq!(prompt, "latest user input");
+
+    let fixture = fixture_runtime("authenticated");
+    let mut first = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("first fixture initialize timed out")
+    .expect("first fixture initialize failed");
+    let thread_id = start_thread(&mut first).await;
+    start_turn_with_text(&mut first, &thread_id, "initial remote turn").await;
+    drain_turn(&mut first).await;
+    first.shutdown().await;
+
+    let mut restarted = timeout(
+        TEST_TIMEOUT,
+        CodexConnection::spawn_runtime(fixture.spec.clone(), None),
+    )
+    .await
+    .expect("restarted fixture initialize timed out")
+    .expect("restarted fixture initialize failed");
+    restarted
+        .request(
+            "thread/resume",
+            json!({ "threadId": thread_id.clone() }),
+            TEST_TIMEOUT,
+        )
+        .await
+        .expect("thread/resume failed");
+    start_turn_with_text(&mut restarted, &thread_id, &prompt).await;
+    drain_turn(&mut restarted).await;
+    restarted.shutdown().await;
+
+    let requests = fixture_request_log(&fixture);
+    let resumed_turn = requests
+        .iter()
+        .rev()
+        .find(|request| request.get("method").and_then(Value::as_str) == Some("turn/start"))
+        .expect("resumed turn request");
+    assert_eq!(
+        resumed_turn.pointer("/params/input/0/text"),
+        Some(&json!("latest user input"))
+    );
+    let serialized = resumed_turn.to_string();
+    assert!(!serialized.contains("old user input must not replay"));
+    assert!(!serialized.contains("old assistant response"));
+}
+
+#[test]
+fn empty_latest_user_input_never_replays_local_history() {
+    let messages = vec![
+        json!({ "role": "user", "content": "old user input" }),
+        json!({ "role": "assistant", "content": "old assistant response" }),
+        json!({ "role": "user", "content": "   " }),
+    ];
+    assert_eq!(latest_user_prompt(&messages), "");
+}
+
+#[test]
+fn provider_session_bindings_survive_reopened_store_connections() {
+    let suffix = FIXTURE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let scope = store::ProjectScope {
+        project_path: Some(format!("/tmp/fennara-codex-binding-{suffix}")),
+        project_name: Some(format!("Codex binding {suffix}")),
+    };
+    let first_chat = store::create_chat(&scope, "codex/gpt-5.5-codex", "medium", &[])
+        .expect("create first chat");
+    let second_chat = store::create_chat(&scope, "codex/gpt-5.5-codex", "medium", &[])
+        .expect("create second chat");
+
+    store::upsert_provider_session_binding(
+        &first_chat.chat.id,
+        "codex",
+        "thread-first",
+        "default",
+        Some("0.144.4"),
+    )
+    .expect("bind first chat");
+    store::upsert_provider_session_binding(
+        &second_chat.chat.id,
+        "codex",
+        "thread-second",
+        "default",
+        Some("0.144.4"),
+    )
+    .expect("bind second chat");
+
+    let first = store::provider_session_binding(&first_chat.chat.id, "codex")
+        .expect("read first binding")
+        .expect("first binding");
+    let second = store::provider_session_binding(&second_chat.chat.id, "codex")
+        .expect("read second binding")
+        .expect("second binding");
+    assert_eq!(first.provider_thread_id, "thread-first");
+    assert_eq!(second.provider_thread_id, "thread-second");
+
+    store::mark_provider_session_broken(&first_chat.chat.id, "codex")
+        .expect("mark first binding broken");
+    let first = store::provider_session_binding(&first_chat.chat.id, "codex")
+        .expect("reopen first binding")
+        .expect("first binding after reopen");
+    let second = store::provider_session_binding(&second_chat.chat.id, "codex")
+        .expect("reopen second binding")
+        .expect("second binding after reopen");
+    assert_eq!(first.resume_status, "broken");
+    assert_eq!(second.resume_status, "ready");
+    assert_eq!(second.provider_thread_id, "thread-second");
 }
 
 #[tokio::test]
