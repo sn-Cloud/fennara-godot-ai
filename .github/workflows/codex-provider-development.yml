@@ -31,7 +31,27 @@ jobs:
           components: rustfmt
 
       - name: Apply phase-one architecture changes
-        run: python .github/scripts/apply_codex_provider_phase1.py
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i 's/    expected=2,/    expected=1,/' .github/scripts/apply_codex_provider_phase1.py
+          python .github/scripts/apply_codex_provider_phase1.py
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs')
+          content = path.read_text(encoding='utf-8')
+          old = '''        max_output_tokens: None,
+        cwd: None,
+        approval_mode: "ask".to_string(),'''
+          new = '''        max_output_tokens: None,
+        chat_id: None,
+        cwd: None,
+        approval_mode: "ask".to_string(),'''
+          count = content.count(old)
+          if count != 1:
+              raise RuntimeError(f'expected one remaining ChatRequest constructor, found {count}')
+          path.write_text(content.replace(old, new, 1), encoding='utf-8', newline='\n')
+          PY
 
       - name: Format Rust
         working-directory: local
