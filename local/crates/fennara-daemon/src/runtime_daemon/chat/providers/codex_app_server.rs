@@ -1,6 +1,4 @@
 use std::{
-    env,
-    path::{Path, PathBuf},
     process::Stdio,
     sync::{Mutex, OnceLock},
     time::Duration,
@@ -10,13 +8,14 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout},
     sync::oneshot,
     time::timeout,
 };
 
 use super::super::store;
 use super::{
+    codex_runtime::{self, CodexRuntimeMetadata},
     control::{
         ProviderApprovalDecision, ProviderApprovalKind, ProviderApprovalRequest,
         ProviderApprovalSender,
@@ -31,7 +30,6 @@ const INIT_TIMEOUT: Duration = Duration::from_secs(20);
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
-const CODEX_COMMAND_ENV: &str = "FENNARA_CODEX_COMMAND";
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct CodexAccountStatus {
@@ -42,6 +40,7 @@ pub(crate) struct CodexAccountStatus {
     pub(crate) plan_type: Option<String>,
     pub(crate) email: Option<String>,
     pub(crate) error: Option<String>,
+    pub(crate) runtime: Option<CodexRuntimeMetadata>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -70,26 +69,22 @@ fn store_account_status(status: CodexAccountStatus) {
 }
 
 pub(crate) fn is_installed() -> bool {
-    resolve_codex_command().is_some()
+    codex_runtime::resolve_runtime().is_ok()
 }
 
 pub(crate) async fn account_status() -> Result<CodexAccountStatus, String> {
-    if !is_installed() {
-        let status = CodexAccountStatus {
-            installed: false,
-            error: Some(
-                "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND."
-                    .to_string(),
-            ),
-            ..CodexAccountStatus::default()
-        };
-        store_account_status(status.clone());
-        return Ok(status);
-    }
-
-    let mut connection = CodexConnection::spawn()
-        .await
-        .map_err(|error| error.user_message())?;
+    let mut connection = match CodexConnection::spawn().await {
+        Ok(connection) => connection,
+        Err(error) => {
+            let status = CodexAccountStatus {
+                installed: false,
+                error: Some(error.user_message()),
+                ..CodexAccountStatus::default()
+            };
+            store_account_status(status.clone());
+            return Ok(status);
+        }
+    };
     let result = connection
         .request(
             "account/read",
@@ -98,19 +93,16 @@ pub(crate) async fn account_status() -> Result<CodexAccountStatus, String> {
         )
         .await
         .map_err(|error| error.user_message())?;
-    let status = account_status_from_result(&result, true, false, None);
+    let status = attach_runtime(
+        account_status_from_result(&result, true, false, None),
+        connection.runtime.as_ref(),
+    );
     store_account_status(status.clone());
     connection.shutdown().await;
     Ok(status)
 }
 
 pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
-    if !is_installed() {
-        return Err(
-            "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND."
-                .to_string(),
-        );
-    }
     if cached_account_status().signing_in {
         return Err("A Codex ChatGPT login is already in progress.".to_string());
     }
@@ -142,6 +134,7 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
         .to_string();
 
     let previous = cached_account_status();
+    let runtime = connection.runtime.clone();
     store_account_status(CodexAccountStatus {
         installed: true,
         connected: previous.connected,
@@ -150,6 +143,7 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
         plan_type: previous.plan_type,
         email: previous.email,
         error: None,
+        runtime: runtime.clone(),
     });
 
     tokio::spawn(async move {
@@ -167,7 +161,7 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
                 ..CodexAccountStatus::default()
             },
         };
-        store_account_status(status);
+        store_account_status(attach_runtime(status, runtime.as_ref()));
         connection.shutdown().await;
     });
 
@@ -175,9 +169,6 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
 }
 
 pub(crate) async fn logout() -> Result<CodexAccountStatus, String> {
-    if !is_installed() {
-        return Err("Codex CLI was not found.".to_string());
-    }
     let mut connection = CodexConnection::spawn()
         .await
         .map_err(|error| error.user_message())?;
@@ -188,6 +179,7 @@ pub(crate) async fn logout() -> Result<CodexAccountStatus, String> {
     connection.shutdown().await;
     let status = CodexAccountStatus {
         installed: true,
+        runtime: connection.runtime.clone(),
         ..CodexAccountStatus::default()
     };
     store_account_status(status.clone());
@@ -211,7 +203,10 @@ where
             RPC_TIMEOUT,
         )
         .await?;
-    let account_status = account_status_from_result(&account, true, false, None);
+    let account_status = attach_runtime(
+        account_status_from_result(&account, true, false, None),
+        connection.runtime.as_ref(),
+    );
     store_account_status(account_status.clone());
     if !account_status.connected {
         connection.shutdown().await;
@@ -534,6 +529,7 @@ async fn wait_for_login_completion(
                         .map(ToString::to_string),
                     email: None,
                     error: None,
+                    runtime: None,
                 };
                 if successful || last_status.connected {
                     return Ok(last_status);
@@ -576,7 +572,16 @@ fn account_status_from_result(
             .and_then(Value::as_str)
             .map(ToString::to_string),
         error,
+        runtime: None,
     }
+}
+
+fn attach_runtime(
+    mut status: CodexAccountStatus,
+    runtime: Option<&CodexRuntimeMetadata>,
+) -> CodexAccountStatus {
+    status.runtime = runtime.cloned();
+    status
 }
 
 fn latest_user_prompt(messages: &[Value]) -> String {
@@ -687,6 +692,7 @@ struct CodexConnection {
     lines: Lines<BufReader<ChildStdout>>,
     next_id: u64,
     approval_tx: Option<ProviderApprovalSender>,
+    runtime: Option<CodexRuntimeMetadata>,
 }
 
 impl CodexConnection {
@@ -697,7 +703,8 @@ impl CodexConnection {
     async fn spawn_with_approvals(
         approval_tx: Option<ProviderApprovalSender>,
     ) -> Result<Self, LlmError> {
-        let mut command = codex_app_server_command()?;
+        let runtime_spec = codex_runtime::resolve_runtime()?;
+        let mut command = codex_runtime::build_app_server_command(&runtime_spec)?;
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -721,8 +728,9 @@ impl CodexConnection {
             lines: BufReader::new(stdout).lines(),
             next_id: 1,
             approval_tx,
+            runtime: None,
         };
-        connection
+        let initialize = connection
             .request(
                 "initialize",
                 json!({
@@ -736,6 +744,10 @@ impl CodexConnection {
                 INIT_TIMEOUT,
             )
             .await?;
+        connection.runtime = Some(codex_runtime::metadata_from_initialize(
+            &runtime_spec,
+            &initialize,
+        ));
         connection
             .send_notification("initialized", json!({}))
             .await?;
@@ -984,63 +996,6 @@ fn rpc_error(error: &Value) -> LlmError {
     }
 }
 
-fn codex_app_server_command() -> Result<Command, LlmError> {
-    let executable = resolve_codex_command().ok_or_else(|| LlmError::ProviderInit {
-        provider: PROVIDER_NAME.to_string(),
-        message: "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND."
-            .to_string(),
-    })?;
-
-    #[cfg(windows)]
-    {
-        let extension = executable
-            .extension()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if matches!(extension.as_str(), "cmd" | "bat") {
-            let mut command = Command::new("cmd.exe");
-            command
-                .args(["/D", "/S", "/C"])
-                .arg(format!("\"{}\" app-server --stdio", executable.display()));
-            return Ok(command);
-        }
-    }
-
-    let mut command = Command::new(executable);
-    command.args(["app-server", "--stdio"]);
-    Ok(command)
-}
-
-fn resolve_codex_command() -> Option<PathBuf> {
-    if let Some(configured) = env::var_os(CODEX_COMMAND_ENV).filter(|value| !value.is_empty()) {
-        let path = PathBuf::from(configured);
-        if path.is_file() {
-            return Some(path);
-        }
-    }
-
-    let path = env::var_os("PATH")?;
-    let names: &[&str] = if cfg!(windows) {
-        &["codex.exe", "codex.cmd", "codex.bat"]
-    } else {
-        &["codex"]
-    };
-    for directory in env::split_paths(&path) {
-        for name in names {
-            let candidate = directory.join(name);
-            if is_executable_candidate(&candidate) {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn is_executable_candidate(path: &Path) -> bool {
-    path.is_file()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1113,6 +1068,28 @@ mod tests {
                 &json!({ "reason": "Run the test suite", "command": "cargo test" })
             ),
             "Run the test suite"
+        );
+    }
+
+    #[test]
+    fn account_status_attaches_runtime_metadata() {
+        let runtime = CodexRuntimeMetadata {
+            version: Some(codex_runtime::PINNED_CODEX_VERSION.to_string()),
+            compatibility: codex_runtime::CodexCompatibility::Tested,
+            pinned_version: codex_runtime::PINNED_CODEX_VERSION,
+            source: codex_runtime::CodexRuntimeSource::Path,
+            platform: codex_runtime::CodexRuntimePlatform::Linux,
+            codex_home: Some("/tmp/codex".to_string()),
+            server_platform_family: Some("unix".to_string()),
+            server_platform_os: Some("linux".to_string()),
+        };
+        let status = attach_runtime(CodexAccountStatus::default(), Some(&runtime));
+        assert_eq!(
+            status
+                .runtime
+                .as_ref()
+                .and_then(|runtime| runtime.version.as_deref()),
+            Some(codex_runtime::PINNED_CODEX_VERSION)
         );
     }
 

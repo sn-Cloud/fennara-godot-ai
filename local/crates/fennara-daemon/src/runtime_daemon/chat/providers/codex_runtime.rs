@@ -131,8 +131,7 @@ pub(crate) fn resolve_runtime() -> Result<CodexRuntimeSpec, LlmError> {
     }
 
     Err(provider_init(
-        "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND."
-            .to_string(),
+        "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND.".to_string(),
     ))
 }
 
@@ -148,7 +147,9 @@ pub(crate) fn metadata_from_initialize(
     runtime: &CodexRuntimeSpec,
     initialize: &serde_json::Value,
 ) -> CodexRuntimeMetadata {
-    let user_agent = initialize.get("userAgent").and_then(serde_json::Value::as_str);
+    let user_agent = initialize
+        .get("userAgent")
+        .and_then(serde_json::Value::as_str);
     let version = user_agent.and_then(parse_codex_version);
     let compatibility = compatibility_for_version(version.as_deref());
     let codex_home = initialize
@@ -217,9 +218,7 @@ fn configured_codex_home() -> Result<Option<PathBuf>, LlmError> {
 
 fn expand_home(path: PathBuf) -> PathBuf {
     let text = path.to_string_lossy();
-    let remainder = text
-        .strip_prefix("~/")
-        .or_else(|| text.strip_prefix("~\\"));
+    let remainder = text.strip_prefix("~/").or_else(|| text.strip_prefix("~\\"));
     let Some(remainder) = remainder else {
         return path;
     };
@@ -259,12 +258,10 @@ fn platform_app_server_command(runtime: &CodexRuntimeSpec) -> Result<Command, Ll
         .to_ascii_lowercase();
     if matches!(extension.as_str(), "cmd" | "bat") {
         let mut command = Command::new("cmd.exe");
-        command
-            .args(["/D", "/S", "/C"])
-            .arg(format!(
-                "\"{}\" app-server --stdio",
-                runtime.executable.display()
-            ));
+        command.args(["/D", "/S", "/C"]).arg(format!(
+            "\"{}\" app-server --stdio",
+            runtime.executable.display()
+        ));
         return Ok(command);
     }
     let mut command = Command::new(&runtime.executable);
@@ -292,7 +289,9 @@ fn is_executable_candidate(path: &Path) -> bool {
 }
 
 fn looks_like_version(candidate: &str) -> bool {
-    let core = candidate.split_once('-').map_or(candidate, |(core, _)| core);
+    let core = candidate
+        .split_once('-')
+        .map_or(candidate, |(core, _)| core);
     let parts = core.split('.').collect::<Vec<_>>();
     parts.len() >= 3
         && parts
