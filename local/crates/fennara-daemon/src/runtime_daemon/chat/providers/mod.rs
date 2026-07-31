@@ -565,6 +565,7 @@ pub(crate) fn model_context_estimate(
             messages: vec![json!({ "role": "user", "content": "" })],
             tools: Vec::new(),
             max_output_tokens: None,
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         },
@@ -582,6 +583,7 @@ pub(crate) fn selected_model_supports_image_input(
         messages: vec![json!({ "role": "user", "content": "" })],
         tools: Vec::new(),
         max_output_tokens: None,
+        chat_id: None,
         cwd: None,
         approval_mode: "ask".to_string(),
     };

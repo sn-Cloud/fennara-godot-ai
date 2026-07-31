@@ -1662,6 +1662,7 @@ mod tests {
                 json!({ "role": "user", "content": "hello" }),
             ],
             tools: Vec::new(),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         }

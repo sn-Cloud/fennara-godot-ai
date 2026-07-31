@@ -71,6 +71,7 @@ where
                 messages: messages_for_task,
                 tools: tools_for_task,
                 max_output_tokens: None,
+                chat_id: Some(chat_id_for_task.clone()),
                 cwd: project_path,
                 approval_mode,
             },

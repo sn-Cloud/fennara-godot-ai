@@ -14,6 +14,7 @@ use tokio::{
     time::timeout,
 };
 
+use super::super::store;
 use super::{
     error::LlmError,
     request::LlmRequest,
@@ -213,6 +214,12 @@ where
         });
     }
 
+    let chat_id = request.chat_id.as_deref().ok_or_else(|| LlmError::Config {
+        message: "Codex requests require a Fennara chat id.".to_string(),
+    })?;
+    let existing_binding = store::provider_session_binding(chat_id, "codex")
+        .map_err(|message| LlmError::Config { message })?;
+
     let mut thread_params = Map::new();
     if let Some(cwd) = request
         .cwd
@@ -223,7 +230,14 @@ where
     }
     thread_params.insert(
         "approvalPolicy".to_string(),
-        Value::String("never".to_string()),
+        Value::String(
+            if request.approval_mode == "full_access" {
+                "never"
+            } else {
+                "on-request"
+            }
+            .to_string(),
+        ),
     );
     thread_params.insert(
         "sandbox".to_string(),
@@ -236,7 +250,6 @@ where
             .to_string(),
         ),
     );
-    thread_params.insert("ephemeral".to_string(), Value::Bool(true));
     thread_params.insert(
         "serviceName".to_string(),
         Value::String("fennara_godot_ai".to_string()),
@@ -246,20 +259,57 @@ where
         thread_params.insert("model".to_string(), Value::String(model_id.to_string()));
     }
 
-    let thread_result = connection
-        .request("thread/start", Value::Object(thread_params), RPC_TIMEOUT)
-        .await?;
+    let resumed = existing_binding.is_some();
+    let thread_result = if let Some(binding) = existing_binding.as_ref() {
+        let mut resume_params = thread_params.clone();
+        resume_params.insert(
+            "threadId".to_string(),
+            Value::String(binding.provider_thread_id.clone()),
+        );
+        match connection
+            .request("thread/resume", Value::Object(resume_params), RPC_TIMEOUT)
+            .await
+        {
+            Ok(result) => result,
+            Err(error) if is_missing_thread_error(&error) => {
+                let _ = store::mark_provider_session_broken(chat_id, "codex");
+                connection.shutdown().await;
+                return Err(LlmError::ProviderApi {
+                    provider: PROVIDER_NAME.to_string(),
+                    status: None,
+                    message: "The Codex thread for this Fennara chat is no longer available. Start a new Codex thread explicitly; Fennara will not silently rebuild it from local history.".to_string(),
+                    retryable: false,
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    } else {
+        connection
+            .request("thread/start", Value::Object(thread_params), RPC_TIMEOUT)
+            .await?
+    };
     let thread_id = thread_result
         .pointer("/thread/id")
         .and_then(Value::as_str)
+        .or_else(|| {
+            existing_binding
+                .as_ref()
+                .map(|binding| binding.provider_thread_id.as_str())
+        })
         .ok_or_else(|| LlmError::InvalidProviderOutput {
             provider: PROVIDER_NAME.to_string(),
             message: "Codex did not return a thread id.".to_string(),
             raw: Some(thread_result.to_string()),
         })?
         .to_string();
+    store::upsert_provider_session_binding(chat_id, "codex", &thread_id, "default", None)
+        .map_err(|message| LlmError::Config { message })?;
 
-    let prompt = prompt_from_messages(&request.messages);
+    let prompt = if resumed {
+        latest_user_prompt(&request.messages)
+    } else {
+        prompt_from_messages(&request.messages)
+    };
     let turn_params = json!({
         "threadId": thread_id.clone(),
         "input": [{ "type": "text", "text": prompt }],
@@ -516,6 +566,24 @@ fn account_status_from_result(
             .map(ToString::to_string),
         error,
     }
+}
+
+fn latest_user_prompt(messages: &[Value]) -> String {
+    messages
+        .iter()
+        .rev()
+        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+        .map(|message| message_content(message.get("content")))
+        .filter(|content| !content.trim().is_empty())
+        .unwrap_or_else(|| prompt_from_messages(messages))
+}
+
+fn is_missing_thread_error(error: &LlmError) -> bool {
+    let message = error.user_message().to_ascii_lowercase();
+    message.contains("thread")
+        && (message.contains("not found")
+            || message.contains("does not exist")
+            || message.contains("missing"))
 }
 
 fn prompt_from_messages(messages: &[Value]) -> String {
@@ -873,6 +941,33 @@ mod tests {
         ]);
         assert!(prompt.contains("[system]"));
         assert!(prompt.contains("Create a node."));
+    }
+
+    #[test]
+    fn latest_user_prompt_uses_only_the_newest_user_message() {
+        let prompt = latest_user_prompt(&[
+            json!({ "role": "system", "content": "system" }),
+            json!({ "role": "user", "content": "first" }),
+            json!({ "role": "assistant", "content": "reply" }),
+            json!({ "role": "user", "content": "second" }),
+        ]);
+        assert_eq!(prompt, "second");
+    }
+
+    #[test]
+    fn missing_thread_errors_are_classified_narrowly() {
+        assert!(is_missing_thread_error(&LlmError::ProviderApi {
+            provider: PROVIDER_NAME.to_string(),
+            status: None,
+            message: "Thread does not exist".to_string(),
+            retryable: false,
+        }));
+        assert!(!is_missing_thread_error(&LlmError::ProviderApi {
+            provider: PROVIDER_NAME.to_string(),
+            status: None,
+            message: "Permission denied".to_string(),
+            retryable: false,
+        }));
     }
 
     #[test]

@@ -1,0 +1,516 @@
+diff --git a/.github/codex-provider-phase1.trigger b/.github/codex-provider-phase1.trigger
+deleted file mode 100644
+index b7e40d2..0000000
+--- a/.github/codex-provider-phase1.trigger
++++ /dev/null
+@@ -1 +0,0 @@
+-phase-one-4
+diff --git a/.github/scripts/apply_codex_provider_phase1.py b/.github/scripts/apply_codex_provider_phase1.py
+index c9413ec..486227f 100644
+--- a/.github/scripts/apply_codex_provider_phase1.py
++++ b/.github/scripts/apply_codex_provider_phase1.py
+@@ -100,7 +100,7 @@ replace_all(
+             chat_id: None,
+             cwd: None,
+             approval_mode: \"ask\".to_string(),""",
+-    expected=2,
++    expected=1,
+ )
+ 
+ # Codex owns context compaction. Existing providers keep the current Fennara path.
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/publisher.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/publisher.rs
+index 8f10bca..a9fd623 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/publisher.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/publisher.rs
+@@ -71,6 +71,7 @@ where
+                 messages: messages_for_task,
+                 tools: tools_for_task,
+                 max_output_tokens: None,
++                chat_id: Some(chat_id_for_task.clone()),
+                 cwd: project_path,
+                 approval_mode,
+             },
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/runner.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/runner.rs
+index ba5b3ef..8ef12b6 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/runner.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/generation/runner.rs
+@@ -174,8 +174,12 @@ where
+             "tool_image_followups": allow_tool_image_followups
+         }),
+     );
+-    let summary_budgets =
+-        summary_budgets_for_model(&provider_settings, &model, &reasoning_effort, &trace);
++    let is_codex_provider = model.starts_with("codex/");
++    let summary_budgets = if is_codex_provider {
++        None
++    } else {
++        summary_budgets_for_model(&provider_settings, &model, &reasoning_effort, &trace)
++    };
+ 
+     let replay_span = trace.start_span("prompt.replay", json!({ "chat_id": chat_id.as_str() }));
+     let mut replay_messages = match replay_messages_for_budget(&chat_id, summary_budgets) {
+@@ -1299,6 +1303,7 @@ fn estimate_provider_input_tokens(
+             messages: provider_messages.to_vec(),
+             tools: tools::definitions(),
+             max_output_tokens: None,
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         },
+@@ -1362,6 +1367,7 @@ async fn try_create_context_summary(
+             messages: summary_messages.clone(),
+             tools: Vec::new(),
+             max_output_tokens: Some(summary_output_max_tokens),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         },
+@@ -1387,6 +1393,7 @@ async fn try_create_context_summary(
+             messages: summary_messages,
+             tools: Vec::new(),
+             max_output_tokens: Some(summary_output_max_tokens),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         },
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/anthropic_compatible.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/anthropic_compatible.rs
+index 694c070..470e3fd 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/anthropic_compatible.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/anthropic_compatible.rs
+@@ -1662,6 +1662,7 @@ mod tests {
+                 json!({ "role": "user", "content": "hello" }),
+             ],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         }
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/openai_compatible.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/openai_compatible.rs
+index 0f99848..239d515 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/openai_compatible.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/adapters/openai_compatible.rs
+@@ -1303,6 +1303,7 @@ mod tests {
+             },
+             messages: vec![json!({ "role": "user", "content": "hello" })],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         }
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/capability_check.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/capability_check.rs
+index d9f85d6..97157b2 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/capability_check.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/capability_check.rs
+@@ -95,6 +95,7 @@ mod tests {
+             model: resolved,
+             messages: vec![json!({ "role": "user", "content": "hello" })],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         }
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
+index ccd470f..93a8a98 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/codex_app_server.rs
+@@ -14,6 +14,7 @@ use tokio::{
+     time::timeout,
+ };
+ 
++use super::super::store;
+ use super::{
+     error::LlmError,
+     request::LlmRequest,
+@@ -213,6 +214,12 @@ where
+         });
+     }
+ 
++    let chat_id = request.chat_id.as_deref().ok_or_else(|| LlmError::Config {
++        message: "Codex requests require a Fennara chat id.".to_string(),
++    })?;
++    let existing_binding = store::provider_session_binding(chat_id, "codex")
++        .map_err(|message| LlmError::Config { message })?;
++
+     let mut thread_params = Map::new();
+     if let Some(cwd) = request
+         .cwd
+@@ -223,7 +230,14 @@ where
+     }
+     thread_params.insert(
+         "approvalPolicy".to_string(),
+-        Value::String("never".to_string()),
++        Value::String(
++            if request.approval_mode == "full_access" {
++                "never"
++            } else {
++                "on-request"
++            }
++            .to_string(),
++        ),
+     );
+     thread_params.insert(
+         "sandbox".to_string(),
+@@ -236,7 +250,6 @@ where
+             .to_string(),
+         ),
+     );
+-    thread_params.insert("ephemeral".to_string(), Value::Bool(true));
+     thread_params.insert(
+         "serviceName".to_string(),
+         Value::String("fennara_godot_ai".to_string()),
+@@ -246,20 +259,57 @@ where
+         thread_params.insert("model".to_string(), Value::String(model_id.to_string()));
+     }
+ 
+-    let thread_result = connection
+-        .request("thread/start", Value::Object(thread_params), RPC_TIMEOUT)
+-        .await?;
++    let resumed = existing_binding.is_some();
++    let thread_result = if let Some(binding) = existing_binding.as_ref() {
++        let mut resume_params = thread_params.clone();
++        resume_params.insert(
++            "threadId".to_string(),
++            Value::String(binding.provider_thread_id.clone()),
++        );
++        match connection
++            .request("thread/resume", Value::Object(resume_params), RPC_TIMEOUT)
++            .await
++        {
++            Ok(result) => result,
++            Err(error) if is_missing_thread_error(&error) => {
++                let _ = store::mark_provider_session_broken(chat_id, "codex");
++                connection.shutdown().await;
++                return Err(LlmError::ProviderApi {
++                    provider: PROVIDER_NAME.to_string(),
++                    status: None,
++                    message: "The Codex thread for this Fennara chat is no longer available. Start a new Codex thread explicitly; Fennara will not silently rebuild it from local history.".to_string(),
++                    retryable: false,
++                });
++            }
++            Err(error) => return Err(error),
++        }
++    } else {
++        connection
++            .request("thread/start", Value::Object(thread_params), RPC_TIMEOUT)
++            .await?
++    };
+     let thread_id = thread_result
+         .pointer("/thread/id")
+         .and_then(Value::as_str)
++        .or_else(|| {
++            existing_binding
++                .as_ref()
++                .map(|binding| binding.provider_thread_id.as_str())
++        })
+         .ok_or_else(|| LlmError::InvalidProviderOutput {
+             provider: PROVIDER_NAME.to_string(),
+             message: "Codex did not return a thread id.".to_string(),
+             raw: Some(thread_result.to_string()),
+         })?
+         .to_string();
++    store::upsert_provider_session_binding(chat_id, "codex", &thread_id, "default", None)
++        .map_err(|message| LlmError::Config { message })?;
+ 
+-    let prompt = prompt_from_messages(&request.messages);
++    let prompt = if resumed {
++        latest_user_prompt(&request.messages)
++    } else {
++        prompt_from_messages(&request.messages)
++    };
+     let turn_params = json!({
+         "threadId": thread_id.clone(),
+         "input": [{ "type": "text", "text": prompt }],
+@@ -518,6 +568,24 @@ fn account_status_from_result(
+     }
+ }
+ 
++fn latest_user_prompt(messages: &[Value]) -> String {
++    messages
++        .iter()
++        .rev()
++        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
++        .map(|message| message_content(message.get("content")))
++        .filter(|content| !content.trim().is_empty())
++        .unwrap_or_else(|| prompt_from_messages(messages))
++}
++
++fn is_missing_thread_error(error: &LlmError) -> bool {
++    let message = error.user_message().to_ascii_lowercase();
++    message.contains("thread")
++        && (message.contains("not found")
++            || message.contains("does not exist")
++            || message.contains("missing"))
++}
++
+ fn prompt_from_messages(messages: &[Value]) -> String {
+     let mut output = String::from(
+         "You are operating through Fennara inside a Godot project. Use the configured Fennara MCP server for Godot-aware editor and runtime operations when available. Respect the current project boundary.\n\nConversation context:\n",
+@@ -875,6 +943,33 @@ mod tests {
+         assert!(prompt.contains("Create a node."));
+     }
+ 
++    #[test]
++    fn latest_user_prompt_uses_only_the_newest_user_message() {
++        let prompt = latest_user_prompt(&[
++            json!({ "role": "system", "content": "system" }),
++            json!({ "role": "user", "content": "first" }),
++            json!({ "role": "assistant", "content": "reply" }),
++            json!({ "role": "user", "content": "second" }),
++        ]);
++        assert_eq!(prompt, "second");
++    }
++
++    #[test]
++    fn missing_thread_errors_are_classified_narrowly() {
++        assert!(is_missing_thread_error(&LlmError::ProviderApi {
++            provider: PROVIDER_NAME.to_string(),
++            status: None,
++            message: "Thread does not exist".to_string(),
++            retryable: false,
++        }));
++        assert!(!is_missing_thread_error(&LlmError::ProviderApi {
++            provider: PROVIDER_NAME.to_string(),
++            status: None,
++            message: "Permission denied".to_string(),
++            retryable: false,
++        }));
++    }
++
+     #[test]
+     fn reads_chatgpt_account_status() {
+         let status = account_status_from_result(
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/context.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/context.rs
+index 956ad13..d9da745 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/context.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/context.rs
+@@ -237,6 +237,7 @@ mod tests {
+             model: resolved,
+             messages: vec![json!({ "role": "user", "content": "x".repeat(2000) })],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         };
+@@ -278,6 +279,7 @@ mod tests {
+                 messages: vec![json!({ "role": "user", "content": "hello" })],
+                 tools: Vec::new(),
+                 max_output_tokens: None,
++                chat_id: None,
+                 cwd: None,
+                 approval_mode: "ask".to_string(),
+             },
+@@ -348,6 +350,7 @@ mod tests {
+                 ]
+             })],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         };
+@@ -366,6 +369,7 @@ mod tests {
+                 ]
+             })],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         };
+@@ -421,6 +425,7 @@ mod tests {
+                 ]
+             })],
+             tools: Vec::new(),
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         };
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs
+index 9d1b17d..dc08996 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/mod.rs
+@@ -565,6 +565,7 @@ pub(crate) fn model_context_estimate(
+             messages: vec![json!({ "role": "user", "content": "" })],
+             tools: Vec::new(),
+             max_output_tokens: None,
++            chat_id: None,
+             cwd: None,
+             approval_mode: "ask".to_string(),
+         },
+@@ -582,6 +583,7 @@ pub(crate) fn selected_model_supports_image_input(
+         messages: vec![json!({ "role": "user", "content": "" })],
+         tools: Vec::new(),
+         max_output_tokens: None,
++        chat_id: None,
+         cwd: None,
+         approval_mode: "ask".to_string(),
+     };
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/request.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/request.rs
+index bddf8a0..936dce1 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/request.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/request.rs
+@@ -9,6 +9,7 @@ pub(crate) struct LlmRequest {
+     pub(crate) model: ResolvedModel,
+     pub(crate) messages: Vec<Value>,
+     pub(crate) tools: Vec<Value>,
++    pub(crate) chat_id: Option<String>,
+     pub(crate) cwd: Option<String>,
+     pub(crate) approval_mode: String,
+ }
+@@ -31,6 +32,7 @@ impl LlmRequest {
+             model,
+             messages: request.messages.clone(),
+             tools: request.tools.clone(),
++            chat_id: request.chat_id.clone(),
+             cwd: request.cwd.clone(),
+             approval_mode: request.approval_mode.clone(),
+         })
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/types.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/types.rs
+index 96f7882..1f6b2f9 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/types.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/providers/types.rs
+@@ -306,6 +306,7 @@ pub(crate) struct ChatRequest {
+     pub(crate) messages: Vec<Value>,
+     pub(crate) tools: Vec<Value>,
+     pub(crate) max_output_tokens: Option<u32>,
++    pub(crate) chat_id: Option<String>,
+     pub(crate) cwd: Option<String>,
+     pub(crate) approval_mode: String,
+ }
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/schema.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/schema.rs
+index 436f3a8..64ce260 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/schema.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/schema.rs
+@@ -279,9 +279,32 @@ fn migrate(conn: &Connection) -> Result<(), String> {
+     run_migration_once(conn, 12, "chat_context_summaries", |conn| {
+         create_context_summary_tables(conn)
+     })?;
++    run_migration_once(conn, 13, "chat_provider_sessions", |conn| {
++        create_provider_session_table(conn)
++    })?;
+     Ok(())
+ }
+ 
++fn create_provider_session_table(conn: &Connection) -> Result<(), String> {
++    conn.execute_batch(
++        "CREATE TABLE IF NOT EXISTS chat_provider_sessions (
++           chat_id TEXT NOT NULL,
++           provider_id TEXT NOT NULL,
++           provider_thread_id TEXT NOT NULL,
++           codex_home_key TEXT NOT NULL DEFAULT 'default',
++           runtime_version TEXT,
++           resume_status TEXT NOT NULL DEFAULT 'ready',
++           created_at_ms INTEGER NOT NULL,
++           updated_at_ms INTEGER NOT NULL,
++           PRIMARY KEY (chat_id, provider_id),
++           FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
++         );
++         CREATE INDEX IF NOT EXISTS idx_chat_provider_sessions_thread
++           ON chat_provider_sessions(provider_id, provider_thread_id);",
++    )
++    .map_err(to_store_error)
++}
++
+ pub(crate) fn to_store_error(error: rusqlite::Error) -> String {
+     match &error {
+         rusqlite::Error::SqliteFailure(code, _)
+diff --git a/local/crates/fennara-daemon/src/runtime_daemon/chat/store.rs b/local/crates/fennara-daemon/src/runtime_daemon/chat/store.rs
+index 5c38684..b9e4ecd 100644
+--- a/local/crates/fennara-daemon/src/runtime_daemon/chat/store.rs
++++ b/local/crates/fennara-daemon/src/runtime_daemon/chat/store.rs
+@@ -94,12 +94,97 @@ pub(crate) struct StartedGeneration {
+     pub(crate) id: String,
+ }
+ 
++#[derive(Clone, Debug, Serialize)]
++pub(crate) struct ProviderSessionBinding {
++    pub(crate) chat_id: String,
++    pub(crate) provider_id: String,
++    pub(crate) provider_thread_id: String,
++    pub(crate) codex_home_key: String,
++    pub(crate) runtime_version: Option<String>,
++    pub(crate) resume_status: String,
++    pub(crate) created_at_ms: i64,
++    pub(crate) updated_at_ms: i64,
++}
++
+ #[derive(Clone, Debug)]
+ pub(crate) struct ToolImageFile {
+     pub(crate) file_path: String,
+     pub(crate) mime_type: String,
+ }
+ 
++pub(crate) fn provider_session_binding(
++    chat_id: &str,
++    provider_id: &str,
++) -> Result<Option<ProviderSessionBinding>, String> {
++    let conn = connection()?;
++    conn.query_row(
++        "SELECT chat_id, provider_id, provider_thread_id, codex_home_key,
++                runtime_version, resume_status, created_at_ms, updated_at_ms
++         FROM chat_provider_sessions
++         WHERE chat_id = ?1 AND provider_id = ?2",
++        params![chat_id, provider_id],
++        |row| {
++            Ok(ProviderSessionBinding {
++                chat_id: row.get(0)?,
++                provider_id: row.get(1)?,
++                provider_thread_id: row.get(2)?,
++                codex_home_key: row.get(3)?,
++                runtime_version: row.get(4)?,
++                resume_status: row.get(5)?,
++                created_at_ms: row.get(6)?,
++                updated_at_ms: row.get(7)?,
++            })
++        },
++    )
++    .optional()
++    .map_err(to_store_error)
++}
++
++pub(crate) fn upsert_provider_session_binding(
++    chat_id: &str,
++    provider_id: &str,
++    provider_thread_id: &str,
++    codex_home_key: &str,
++    runtime_version: Option<&str>,
++) -> Result<(), String> {
++    let conn = connection()?;
++    let now = now_ms();
++    conn.execute(
++        "INSERT INTO chat_provider_sessions
++         (chat_id, provider_id, provider_thread_id, codex_home_key, runtime_version,
++          resume_status, created_at_ms, updated_at_ms)
++         VALUES (?1, ?2, ?3, ?4, ?5, 'ready', ?6, ?6)
++         ON CONFLICT(chat_id, provider_id) DO UPDATE SET
++           provider_thread_id = excluded.provider_thread_id,
++           codex_home_key = excluded.codex_home_key,
++           runtime_version = excluded.runtime_version,
++           resume_status = 'ready',
++           updated_at_ms = excluded.updated_at_ms",
++        params![
++            chat_id,
++            provider_id,
++            provider_thread_id,
++            codex_home_key,
++            runtime_version,
++            now
++        ],
++    )
++    .map_err(to_store_error)?;
++    Ok(())
++}
++
++pub(crate) fn mark_provider_session_broken(chat_id: &str, provider_id: &str) -> Result<(), String> {
++    let conn = connection()?;
++    conn.execute(
++        "UPDATE chat_provider_sessions
++         SET resume_status = 'broken', updated_at_ms = ?3
++         WHERE chat_id = ?1 AND provider_id = ?2",
++        params![chat_id, provider_id, now_ms()],
++    )
++    .map_err(to_store_error)?;
++    Ok(())
++}
++
+ pub(crate) fn list_chats(scope: &ProjectScope) -> Result<Vec<ChatSummary>, String> {
+     let conn = connection()?;
+     let mut statement = conn

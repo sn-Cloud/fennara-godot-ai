@@ -279,7 +279,30 @@ fn migrate(conn: &Connection) -> Result<(), String> {
     run_migration_once(conn, 12, "chat_context_summaries", |conn| {
         create_context_summary_tables(conn)
     })?;
+    run_migration_once(conn, 13, "chat_provider_sessions", |conn| {
+        create_provider_session_table(conn)
+    })?;
     Ok(())
+}
+
+fn create_provider_session_table(conn: &Connection) -> Result<(), String> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS chat_provider_sessions (
+           chat_id TEXT NOT NULL,
+           provider_id TEXT NOT NULL,
+           provider_thread_id TEXT NOT NULL,
+           codex_home_key TEXT NOT NULL DEFAULT 'default',
+           runtime_version TEXT,
+           resume_status TEXT NOT NULL DEFAULT 'ready',
+           created_at_ms INTEGER NOT NULL,
+           updated_at_ms INTEGER NOT NULL,
+           PRIMARY KEY (chat_id, provider_id),
+           FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
+         );
+         CREATE INDEX IF NOT EXISTS idx_chat_provider_sessions_thread
+           ON chat_provider_sessions(provider_id, provider_thread_id);",
+    )
+    .map_err(to_store_error)
 }
 
 pub(crate) fn to_store_error(error: rusqlite::Error) -> String {

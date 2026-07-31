@@ -237,6 +237,7 @@ mod tests {
             model: resolved,
             messages: vec![json!({ "role": "user", "content": "x".repeat(2000) })],
             tools: Vec::new(),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         };
@@ -278,6 +279,7 @@ mod tests {
                 messages: vec![json!({ "role": "user", "content": "hello" })],
                 tools: Vec::new(),
                 max_output_tokens: None,
+                chat_id: None,
                 cwd: None,
                 approval_mode: "ask".to_string(),
             },
@@ -348,6 +350,7 @@ mod tests {
                 ]
             })],
             tools: Vec::new(),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         };
@@ -366,6 +369,7 @@ mod tests {
                 ]
             })],
             tools: Vec::new(),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         };
@@ -421,6 +425,7 @@ mod tests {
                 ]
             })],
             tools: Vec::new(),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         };
