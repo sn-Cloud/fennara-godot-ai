@@ -546,7 +546,7 @@ fn provider_session_bindings_survive_reopened_store_connections() {
         &first_chat.chat.id,
         "codex",
         "thread-first",
-        "default",
+        "/tmp/codex-home-first",
         Some("0.144.4"),
     )
     .expect("bind first chat");
@@ -554,8 +554,8 @@ fn provider_session_bindings_survive_reopened_store_connections() {
         &second_chat.chat.id,
         "codex",
         "thread-second",
-        "default",
-        Some("0.144.4"),
+        "/tmp/codex-home-second",
+        Some("0.145.0"),
     )
     .expect("bind second chat");
 
@@ -566,7 +566,11 @@ fn provider_session_bindings_survive_reopened_store_connections() {
         .expect("read second binding")
         .expect("second binding");
     assert_eq!(first.provider_thread_id, "thread-first");
+    assert_eq!(first.codex_home_key, "/tmp/codex-home-first");
+    assert_eq!(first.runtime_version.as_deref(), Some("0.144.4"));
     assert_eq!(second.provider_thread_id, "thread-second");
+    assert_eq!(second.codex_home_key, "/tmp/codex-home-second");
+    assert_eq!(second.runtime_version.as_deref(), Some("0.145.0"));
 
     store::mark_provider_session_broken(&first_chat.chat.id, "codex")
         .expect("mark first binding broken");

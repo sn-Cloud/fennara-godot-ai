@@ -313,6 +313,23 @@ where
     })?;
     let existing_binding = store::provider_session_binding(chat_id, "codex")
         .map_err(|message| LlmError::Config { message })?;
+    let current_codex_home_key = codex_home_key(connection.runtime.as_ref());
+    let current_runtime_version = connection
+        .runtime
+        .as_ref()
+        .and_then(|runtime| runtime.version.clone());
+    if let Some(binding) = existing_binding.as_ref() {
+        if !codex_home_keys_match(&binding.codex_home_key, &current_codex_home_key) {
+            connection.shutdown().await;
+            return Err(LlmError::ProviderApi {
+                provider: PROVIDER_NAME.to_string(),
+                status: None,
+                message: "The Codex thread for this Fennara chat belongs to a different CODEX_HOME. Restore the original FENNARA_CODEX_HOME/CODEX_HOME or start a new Codex thread explicitly; Fennara will not resume it against another Codex home."
+                    .to_string(),
+                retryable: false,
+            });
+        }
+    }
 
     let mut thread_params = Map::new();
     if let Some(cwd) = request
@@ -400,8 +417,14 @@ where
             raw: Some(thread_result.to_string()),
         })?
         .to_string();
-    store::upsert_provider_session_binding(chat_id, "codex", &thread_id, "default", None)
-        .map_err(|message| LlmError::Config { message })?;
+    store::upsert_provider_session_binding(
+        chat_id,
+        "codex",
+        &thread_id,
+        &current_codex_home_key,
+        current_runtime_version.as_deref(),
+    )
+    .map_err(|message| LlmError::Config { message })?;
 
     let prompt = if resumed {
         latest_user_prompt(&request.messages)
@@ -697,6 +720,32 @@ fn attach_runtime(
     status.runtime = runtime.cloned();
     status.mcp = codex_mcp::inspect();
     status
+}
+
+fn normalize_codex_home_key(value: &str) -> String {
+    let normalized = value.trim().replace('\\', "/");
+    let normalized = if normalized.len() > 1 && !normalized.ends_with(":/") {
+        normalized.trim_end_matches('/').to_string()
+    } else {
+        normalized
+    };
+    if cfg!(windows) {
+        normalized.to_ascii_lowercase()
+    } else {
+        normalized
+    }
+}
+
+fn codex_home_key(runtime: Option<&CodexRuntimeMetadata>) -> String {
+    runtime
+        .and_then(|runtime| runtime.codex_home.as_deref())
+        .map(normalize_codex_home_key)
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "default".to_string())
+}
+
+fn codex_home_keys_match(bound: &str, current: &str) -> bool {
+    normalize_codex_home_key(bound) == normalize_codex_home_key(current)
 }
 
 fn latest_user_prompt(messages: &[Value]) -> String {
@@ -1412,6 +1461,20 @@ mod tests {
             json!({ "role": "user", "content": "second" }),
         ]);
         assert_eq!(prompt, "second");
+    }
+
+    #[test]
+    fn codex_home_keys_are_normalized_and_compared_strictly() {
+        assert!(codex_home_keys_match("/tmp/codex-home/", "/tmp/codex-home"));
+        assert!(!codex_home_keys_match(
+            "/tmp/codex-home-a",
+            "/tmp/codex-home-b"
+        ));
+        #[cfg(windows)]
+        assert!(codex_home_keys_match(
+            r"C:\Users\Test\.codex",
+            "c:/users/test/.codex/"
+        ));
     }
 
     #[test]
