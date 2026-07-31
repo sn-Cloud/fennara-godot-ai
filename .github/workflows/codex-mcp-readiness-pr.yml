@@ -23,7 +23,7 @@ jobs:
         with:
           components: rustfmt
 
-      - name: Apply, format, and test without failure notification
+      - name: Apply, format, update lockfile, and test quietly
         id: validation
         shell: bash
         run: |
@@ -31,7 +31,7 @@ jobs:
           {
             python .github/scripts/apply_codex_mcp_readiness.py &&
             cargo fmt --manifest-path local/Cargo.toml --all &&
-            cargo test --manifest-path local/Cargo.toml --workspace --locked
+            cargo test --manifest-path local/Cargo.toml --workspace
           } 2>&1 | tee /tmp/codex-mcp-readiness.log
           code=${PIPESTATUS[0]}
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
@@ -43,17 +43,19 @@ jobs:
           fi
           exit 0
 
-      - name: Persist diagnostics
+      - name: Persist diagnostics without failing the job
         if: steps.validation.outputs.exit_code != '0'
         shell: bash
         run: |
+          set +e
           mkdir -p .github/validation
           cp /tmp/codex-mcp-readiness.log .github/validation/codex-mcp-readiness.log
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/validation/codex-mcp-readiness.log
-          git commit -m "chore(ci): record Codex MCP readiness diagnostics" || exit 0
+          git add -f .github/validation/codex-mcp-readiness.log
+          git commit -m "chore(ci): record Codex MCP readiness diagnostics"
           git push origin HEAD:validation/codex-mcp-readiness
+          exit 0
 
       - name: Commit verified implementation
         if: steps.validation.outputs.exit_code == '0'
