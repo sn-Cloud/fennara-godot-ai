@@ -1,6 +1,7 @@
 use std::{
+    collections::VecDeque,
     process::Stdio,
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 
@@ -8,8 +9,9 @@ use serde::Serialize;
 use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
-    process::{Child, ChildStdin, ChildStdout},
-    sync::oneshot,
+    process::{Child, ChildStderr, ChildStdin, ChildStdout},
+    sync::{Mutex as AsyncMutex, oneshot},
+    task::JoinHandle,
     time::timeout,
 };
 
@@ -30,6 +32,8 @@ const INIT_TIMEOUT: Duration = Duration::from_secs(20);
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const APPROVAL_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
+const STDERR_LINE_LIMIT: usize = 40;
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct CodexAccountStatus {
@@ -50,9 +54,19 @@ pub(crate) struct CodexLoginStart {
 }
 
 static ACCOUNT_STATUS: OnceLock<Mutex<CodexAccountStatus>> = OnceLock::new();
+static ACTIVE_LOGIN: OnceLock<Mutex<Option<ActiveCodexLogin>>> = OnceLock::new();
+
+struct ActiveCodexLogin {
+    login_id: String,
+    cancel: oneshot::Sender<()>,
+}
 
 fn account_status_cache() -> &'static Mutex<CodexAccountStatus> {
     ACCOUNT_STATUS.get_or_init(|| Mutex::new(CodexAccountStatus::default()))
+}
+
+fn active_login() -> &'static Mutex<Option<ActiveCodexLogin>> {
+    ACTIVE_LOGIN.get_or_init(|| Mutex::new(None))
 }
 
 pub(crate) fn cached_account_status() -> CodexAccountStatus {
@@ -103,7 +117,11 @@ pub(crate) async fn account_status() -> Result<CodexAccountStatus, String> {
 }
 
 pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
-    if cached_account_status().signing_in {
+    if active_login()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .is_some()
+    {
         return Err("A Codex ChatGPT login is already in progress.".to_string());
     }
 
@@ -135,6 +153,25 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
 
     let previous = cached_account_status();
     let runtime = connection.runtime.clone();
+    let (cancel_tx, cancel_rx) = oneshot::channel();
+    let login_reserved = {
+        let mut active = active_login()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if active.is_none() {
+            *active = Some(ActiveCodexLogin {
+                login_id: login_id.clone(),
+                cancel: cancel_tx,
+            });
+            true
+        } else {
+            false
+        }
+    };
+    if !login_reserved {
+        connection.shutdown().await;
+        return Err("A Codex ChatGPT login is already in progress.".to_string());
+    }
     store_account_status(CodexAccountStatus {
         installed: true,
         connected: previous.connected,
@@ -146,26 +183,69 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
         runtime: runtime.clone(),
     });
 
+    let task_login_id = login_id.clone();
     tokio::spawn(async move {
-        let outcome = timeout(LOGIN_TIMEOUT, wait_for_login_completion(&mut connection)).await;
-        let status = match outcome {
-            Ok(Ok(status)) => status,
-            Ok(Err(error)) => CodexAccountStatus {
-                installed: true,
-                error: Some(error.user_message()),
-                ..CodexAccountStatus::default()
-            },
-            Err(_) => CodexAccountStatus {
-                installed: true,
-                error: Some("Codex ChatGPT login timed out.".to_string()),
-                ..CodexAccountStatus::default()
-            },
+        let status = tokio::select! {
+            outcome = timeout(LOGIN_TIMEOUT, wait_for_login_completion(&mut connection)) => {
+                match outcome {
+                    Ok(Ok(status)) => status,
+                    Ok(Err(error)) => CodexAccountStatus {
+                        installed: true,
+                        error: Some(error.user_message()),
+                        ..CodexAccountStatus::default()
+                    },
+                    Err(_) => CodexAccountStatus {
+                        installed: true,
+                        error: Some("Codex ChatGPT login timed out.".to_string()),
+                        ..CodexAccountStatus::default()
+                    },
+                }
+            }
+            _ = cancel_rx => {
+                let _ = connection
+                    .request(
+                        "account/login/cancel",
+                        json!({ "loginId": task_login_id }),
+                        RPC_TIMEOUT,
+                    )
+                    .await;
+                CodexAccountStatus {
+                    installed: true,
+                    error: Some("Codex ChatGPT login cancelled.".to_string()),
+                    ..CodexAccountStatus::default()
+                }
+            }
         };
+        {
+            let mut active = active_login()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if active
+                .as_ref()
+                .is_some_and(|active| active.login_id == task_login_id)
+            {
+                *active = None;
+            }
+        }
         store_account_status(attach_runtime(status, runtime.as_ref()));
         connection.shutdown().await;
     });
 
     Ok(CodexLoginStart { login_id, auth_url })
+}
+
+pub(crate) fn cancel_login() -> Result<CodexAccountStatus, String> {
+    let active = active_login()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take()
+        .ok_or_else(|| "No Codex ChatGPT login is in progress.".to_string())?;
+    let _ = active.cancel.send(());
+    let mut status = cached_account_status();
+    status.signing_in = false;
+    status.error = Some("Codex ChatGPT login cancelled.".to_string());
+    store_account_status(status.clone());
+    Ok(status)
 }
 
 pub(crate) async fn logout() -> Result<CodexAccountStatus, String> {
@@ -693,6 +773,8 @@ struct CodexConnection {
     next_id: u64,
     approval_tx: Option<ProviderApprovalSender>,
     runtime: Option<CodexRuntimeMetadata>,
+    stderr_lines: Arc<AsyncMutex<VecDeque<String>>>,
+    stderr_task: Option<JoinHandle<()>>,
 }
 
 impl CodexConnection {
@@ -708,7 +790,7 @@ impl CodexConnection {
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .kill_on_drop(true);
         let mut child = command.spawn().map_err(|error| LlmError::ProviderInit {
             provider: PROVIDER_NAME.to_string(),
@@ -722,6 +804,15 @@ impl CodexConnection {
             provider: PROVIDER_NAME.to_string(),
             message: "Codex app-server stdout was unavailable.".to_string(),
         })?;
+        let stderr = child.stderr.take().ok_or_else(|| LlmError::ProviderInit {
+            provider: PROVIDER_NAME.to_string(),
+            message: "Codex app-server stderr was unavailable.".to_string(),
+        })?;
+        let stderr_lines = Arc::new(AsyncMutex::new(VecDeque::new()));
+        let stderr_task = Some(tokio::spawn(drain_stderr(
+            stderr,
+            Arc::clone(&stderr_lines),
+        )));
         let mut connection = Self {
             child,
             stdin,
@@ -729,6 +820,8 @@ impl CodexConnection {
             next_id: 1,
             approval_tx,
             runtime: None,
+            stderr_lines,
+            stderr_task,
         };
         let initialize = connection
             .request(
@@ -795,21 +888,23 @@ impl CodexConnection {
 
     async fn read_message(&mut self) -> Result<Value, LlmError> {
         loop {
-            let line = self
-                .lines
-                .next_line()
-                .await
-                .map_err(|error| LlmError::InvalidProviderOutput {
-                    provider: PROVIDER_NAME.to_string(),
-                    message: format!("Could not read Codex app-server output: {error}"),
-                    raw: None,
-                })?
-                .ok_or_else(|| LlmError::ProviderApi {
+            let line =
+                self.lines
+                    .next_line()
+                    .await
+                    .map_err(|error| LlmError::InvalidProviderOutput {
+                        provider: PROVIDER_NAME.to_string(),
+                        message: format!("Could not read Codex app-server output: {error}"),
+                        raw: None,
+                    })?;
+            let Some(line) = line else {
+                return Err(LlmError::ProviderApi {
                     provider: PROVIDER_NAME.to_string(),
                     status: None,
-                    message: "Codex app-server exited before the request completed.".to_string(),
-                    retryable: false,
-                })?;
+                    message: self.process_exit_message().await,
+                    retryable: true,
+                });
+            };
             if line.trim().is_empty() {
                 continue;
             }
@@ -911,10 +1006,59 @@ impl CodexConnection {
             })
     }
 
-    async fn shutdown(&mut self) {
-        let _ = self.child.kill().await;
-        let _ = self.child.wait().await;
+    async fn process_exit_message(&mut self) -> String {
+        let status = self.child.try_wait().ok().flatten();
+        let diagnostics = stderr_snapshot(&self.stderr_lines).await;
+        let status_text = status
+            .map(|status| format!(" with status {status}"))
+            .unwrap_or_default();
+        if diagnostics.is_empty() {
+            format!("Codex app-server exited{status_text} before the request completed.")
+        } else {
+            format!(
+                "Codex app-server exited{status_text} before the request completed. stderr: {diagnostics}"
+            )
+        }
     }
+
+    async fn shutdown(&mut self) {
+        if self.child.try_wait().ok().flatten().is_none() {
+            let _ = self.child.start_kill();
+            let _ = timeout(SHUTDOWN_TIMEOUT, self.child.wait()).await;
+        }
+        if let Some(task) = self.stderr_task.take() {
+            task.abort();
+        }
+    }
+}
+
+async fn drain_stderr(stderr: ChildStderr, lines: Arc<AsyncMutex<VecDeque<String>>>) {
+    let mut stderr = BufReader::new(stderr).lines();
+    while let Ok(Some(line)) = stderr.next_line().await {
+        let clean = line.trim();
+        if clean.is_empty() {
+            continue;
+        }
+        let mut buffered = lines.lock().await;
+        push_stderr_line(&mut buffered, clean.to_string());
+    }
+}
+
+fn push_stderr_line(lines: &mut VecDeque<String>, line: String) {
+    if lines.len() >= STDERR_LINE_LIMIT {
+        lines.pop_front();
+    }
+    lines.push_back(line);
+}
+
+async fn stderr_snapshot(lines: &Arc<AsyncMutex<VecDeque<String>>>) -> String {
+    lines
+        .lock()
+        .await
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" | ")
 }
 
 fn optional_string(value: &Value, key: &str) -> Option<String> {
@@ -1069,6 +1213,16 @@ mod tests {
             ),
             "Run the test suite"
         );
+    }
+
+    #[test]
+    fn stderr_buffer_is_bounded() {
+        let mut lines = VecDeque::new();
+        for index in 0..(STDERR_LINE_LIMIT + 5) {
+            push_stderr_line(&mut lines, format!("line-{index}"));
+        }
+        assert_eq!(lines.len(), STDERR_LINE_LIMIT);
+        assert_eq!(lines.front().map(String::as_str), Some("line-5"));
     }
 
     #[test]

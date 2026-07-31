@@ -401,6 +401,20 @@ where
             }
             Err(error) => send_error(sender, request_id, "codex_login_failed", &error).await,
         },
+        "codex_login_cancel" => match providers::codex_app_server::cancel_login() {
+            Ok(status) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_account_status",
+                        "request_id": request_id,
+                        "status": status
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_login_cancel_failed", &error).await,
+        },
         "codex_logout" => match providers::codex_app_server::logout().await {
             Ok(status) => {
                 send_json(
