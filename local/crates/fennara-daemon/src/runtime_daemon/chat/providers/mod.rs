@@ -6,6 +6,7 @@ mod catalog;
 pub(crate) mod catalog_cache;
 mod codex;
 pub(crate) mod codex_app_server;
+pub(crate) mod codex_managed_runtime;
 mod codex_runtime;
 mod context;
 mod control;

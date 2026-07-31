@@ -373,6 +373,54 @@ where
             .await
         }
         "get_project_status" => send_project_status(sender, request_id, state, bound_project).await,
+        "codex_runtime_status" => {
+            let status = providers::codex_managed_runtime::status().await;
+            send_json(
+                sender,
+                json!({
+                    "type": "codex_runtime_status",
+                    "request_id": request_id,
+                    "status": status
+                }),
+            )
+            .await
+        }
+        "codex_runtime_install_start" => {
+            match providers::codex_managed_runtime::start_install().await {
+                Ok(status) => {
+                    send_json(
+                        sender,
+                        json!({
+                            "type": "codex_runtime_status",
+                            "request_id": request_id,
+                            "status": status
+                        }),
+                    )
+                    .await
+                }
+                Err(error) => {
+                    send_error(sender, request_id, "codex_runtime_install_failed", &error).await
+                }
+            }
+        }
+        "codex_runtime_install_cancel" => {
+            match providers::codex_managed_runtime::cancel_install().await {
+                Ok(status) => {
+                    send_json(
+                        sender,
+                        json!({
+                            "type": "codex_runtime_status",
+                            "request_id": request_id,
+                            "status": status
+                        }),
+                    )
+                    .await
+                }
+                Err(error) => {
+                    send_error(sender, request_id, "codex_runtime_cancel_failed", &error).await
+                }
+            }
+        }
         "codex_account_status" => match providers::codex_app_server::account_status().await {
             Ok(status) => {
                 send_json(

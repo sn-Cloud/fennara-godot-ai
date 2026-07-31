@@ -21,8 +21,7 @@ use crate::runtime_daemon::chat::settings;
 const WINDOWS_X64_ASSET_NAME: &str = "codex-x86_64-pc-windows-msvc.exe";
 const WINDOWS_X64_ASSET_URL: &str =
     "https://releases.openai.com/codex/releases/0.144.4/codex-x86_64-pc-windows-msvc.exe";
-const WINDOWS_X64_SHA256: &str =
-    "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5";
+const WINDOWS_X64_SHA256: &str = "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5";
 const DOWNLOAD_FILE_NAME: &str = "codex.exe.download";
 const BACKUP_FILE_NAME: &str = "codex.exe.previous";
 const HASH_BUFFER_BYTES: usize = 1024 * 1024;
@@ -110,7 +109,11 @@ pub(crate) fn verified_executable() -> Option<PathBuf> {
         return None;
     }
     let executable = executable_path();
-    matches!(inspect_runtime_cached(&executable), RuntimeInspection::Valid).then_some(executable)
+    matches!(
+        inspect_runtime_cached(&executable),
+        RuntimeInspection::Valid
+    )
+    .then_some(executable)
 }
 
 pub(crate) async fn status() -> ManagedCodexRuntimeStatus {
@@ -217,16 +220,26 @@ async fn install_windows_runtime(cancel_rx: oneshot::Receiver<()>) -> Result<(),
     let directory = version_directory();
     async_fs::create_dir_all(&directory)
         .await
-        .map_err(|error| DownloadError::Failed(format!("Could not create Codex runtime directory: {error}")))?;
-    recover_interrupted_install(&directory)
-        .map_err(|error| DownloadError::Failed(format!("Could not recover an interrupted Codex install: {error}")))?;
+        .map_err(|error| {
+            DownloadError::Failed(format!("Could not create Codex runtime directory: {error}"))
+        })?;
+    recover_interrupted_install(&directory).map_err(|error| {
+        DownloadError::Failed(format!(
+            "Could not recover an interrupted Codex install: {error}"
+        ))
+    })?;
 
     let partial = directory.join(DOWNLOAD_FILE_NAME);
     let final_path = directory.join("codex.exe");
     let client = reqwest::Client::builder()
-        .user_agent(format!("fennara/{} codex-runtime-installer", env!("CARGO_PKG_VERSION")))
+        .user_agent(format!(
+            "fennara/{} codex-runtime-installer",
+            env!("CARGO_PKG_VERSION")
+        ))
         .build()
-        .map_err(|error| DownloadError::Failed(format!("Could not create Codex download client: {error}")))?;
+        .map_err(|error| {
+            DownloadError::Failed(format!("Could not create Codex download client: {error}"))
+        })?;
 
     let result = download_asset(
         &client,
@@ -247,8 +260,9 @@ async fn install_windows_runtime(cancel_rx: oneshot::Receiver<()>) -> Result<(),
         return Err(error);
     }
 
-    finalize_download(&partial, &final_path)
-        .map_err(|error| DownloadError::Failed(format!("Could not activate the Codex runtime: {error}")))?;
+    finalize_download(&partial, &final_path).map_err(|error| {
+        DownloadError::Failed(format!("Could not activate the Codex runtime: {error}"))
+    })?;
     invalidate_verification_cache();
     if inspect_runtime_cached(&final_path) != RuntimeInspection::Valid {
         return Err(DownloadError::Failed(
@@ -276,12 +290,14 @@ where
         .await
         .map_err(|error| DownloadError::Failed(format!("Codex runtime download failed: {error}")))?
         .error_for_status()
-        .map_err(|error| DownloadError::Failed(format!("Codex runtime download failed: {error}")))?;
+        .map_err(|error| {
+            DownloadError::Failed(format!("Codex runtime download failed: {error}"))
+        })?;
     let total = response.content_length();
     let mut stream = response.bytes_stream();
-    let mut file = async_fs::File::create(partial)
-        .await
-        .map_err(|error| DownloadError::Failed(format!("Could not create Codex download file: {error}")))?;
+    let mut file = async_fs::File::create(partial).await.map_err(|error| {
+        DownloadError::Failed(format!("Could not create Codex download file: {error}"))
+    })?;
     let mut hasher = Sha256::new();
     let mut downloaded = 0u64;
     on_progress(downloaded, total).await;
@@ -308,12 +324,12 @@ where
         }
     }
 
-    file.flush()
-        .await
-        .map_err(|error| DownloadError::Failed(format!("Could not flush Codex runtime download: {error}")))?;
-    file.sync_all()
-        .await
-        .map_err(|error| DownloadError::Failed(format!("Could not sync Codex runtime download: {error}")))?;
+    file.flush().await.map_err(|error| {
+        DownloadError::Failed(format!("Could not flush Codex runtime download: {error}"))
+    })?;
+    file.sync_all().await.map_err(|error| {
+        DownloadError::Failed(format!("Could not sync Codex runtime download: {error}"))
+    })?;
     drop(file);
 
     let actual = format!("{:x}", hasher.finalize());
@@ -380,9 +396,10 @@ fn inspect_runtime_cached(path: &Path) -> RuntimeInspection {
         let cache = verification_cache()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if let Some(cache) = cache.as_ref().filter(|cache| {
-            cache.path == path && cache.len == len && cache.modified == modified
-        }) {
+        if let Some(cache) = cache
+            .as_ref()
+            .filter(|cache| cache.path == path && cache.len == len && cache.modified == modified)
+        {
             return if cache.valid {
                 RuntimeInspection::Valid
             } else {
@@ -443,7 +460,7 @@ fn version_directory() -> PathBuf {
 mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use axum::{Router, body::Body, http::StatusCode, response::Response, routing::get};
+    use axum::{Router, body::Body, response::Response, routing::get};
     use tokio::{net::TcpListener, time::Duration};
 
     use super::*;
@@ -563,6 +580,10 @@ mod tests {
         let url = serve_slow(first.clone(), second.clone()).await;
         let expected = [first, second].concat();
         let (cancel_tx, cancel_rx) = oneshot::channel();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            let _ = cancel_tx.send(());
+        });
         let task = tokio::spawn({
             let partial = partial.clone();
             async move {
@@ -572,11 +593,7 @@ mod tests {
                     &digest(&expected),
                     &partial,
                     cancel_rx,
-                    |downloaded, _| async move {
-                        if downloaded >= 1024 {
-                            let _ = cancel_tx.send(());
-                        }
-                    },
+                    |_, _| async {},
                 )
                 .await
             }
@@ -619,6 +636,9 @@ mod tests {
         assert!(WINDOWS_X64_ASSET_URL.contains(PINNED_CODEX_VERSION));
         assert_eq!(WINDOWS_X64_SHA256.len(), 64);
         assert_eq!(WINDOWS_X64_ASSET_NAME, "codex-x86_64-pc-windows-msvc.exe");
-        assert_eq!(StatusCode::OK.as_u16(), 200);
+        assert_eq!(
+            WINDOWS_X64_SHA256,
+            "51398051c2332b6afe08dc3b9dbb4056085c197f35ca57a307ee303d450cada5"
+        );
     }
 }

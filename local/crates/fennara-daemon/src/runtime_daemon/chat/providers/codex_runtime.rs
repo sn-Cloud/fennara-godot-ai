@@ -6,7 +6,7 @@ use std::{
 use serde::Serialize;
 use tokio::process::Command;
 
-use super::error::LlmError;
+use super::{codex_managed_runtime, error::LlmError};
 
 pub(crate) const PINNED_CODEX_VERSION: &str = "0.144.4";
 pub(crate) const CODEX_COMMAND_ENV: &str = "FENNARA_CODEX_COMMAND";
@@ -37,6 +37,7 @@ impl CodexRuntimePlatform {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum CodexRuntimeSource {
     Configured,
+    Managed,
     Path,
 }
 
@@ -94,6 +95,15 @@ pub(crate) fn resolve_runtime() -> Result<CodexRuntimeSpec, LlmError> {
         });
     }
 
+    if let Some(executable) = codex_managed_runtime::verified_executable() {
+        return Ok(CodexRuntimeSpec {
+            executable,
+            source: CodexRuntimeSource::Managed,
+            platform,
+            codex_home,
+        });
+    }
+
     let search_path = env::var_os("PATH").ok_or_else(|| {
         provider_init("PATH is not available, so the Codex CLI cannot be discovered.".to_string())
     })?;
@@ -112,7 +122,8 @@ pub(crate) fn resolve_runtime() -> Result<CodexRuntimeSpec, LlmError> {
     }
 
     Err(provider_init(
-        "Codex CLI was not found. Install @openai/codex or set FENNARA_CODEX_COMMAND.".to_string(),
+        "Codex CLI was not found. Install @openai/codex, set FENNARA_CODEX_COMMAND, or install the Fennara-managed runtime."
+            .to_string(),
     ))
 }
 
