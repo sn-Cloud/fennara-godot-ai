@@ -421,6 +421,33 @@ where
                 }
             }
         }
+        "codex_mcp_status" => {
+            send_json(
+                sender,
+                json!({
+                    "type": "codex_mcp_status",
+                    "request_id": request_id,
+                    "status": providers::codex_mcp::inspect()
+                }),
+            )
+            .await
+        }
+        "codex_mcp_setup" => match mcp_setup::run("codex").await {
+            Ok(result) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_mcp_setup_completed",
+                        "request_id": request_id,
+                        "status": providers::codex_mcp::inspect(),
+                        "report": result.report,
+                        "warning": result.warning
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_mcp_setup_failed", &error).await,
+        },
         "codex_account_status" => match providers::codex_app_server::account_status().await {
             Ok(status) => {
                 send_json(

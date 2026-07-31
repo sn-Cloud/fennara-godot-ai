@@ -17,6 +17,7 @@ use tokio::{
 
 use super::super::store;
 use super::{
+    codex_mcp,
     codex_runtime::{self, CodexRuntimeMetadata},
     control::{
         ProviderApprovalDecision, ProviderApprovalKind, ProviderApprovalRequest,
@@ -45,6 +46,7 @@ pub(crate) struct CodexAccountStatus {
     pub(crate) email: Option<String>,
     pub(crate) error: Option<String>,
     pub(crate) runtime: Option<CodexRuntimeMetadata>,
+    pub(crate) mcp: codex_mcp::CodexMcpStatus,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -181,6 +183,7 @@ pub(crate) async fn start_login() -> Result<CodexLoginStart, String> {
         email: previous.email,
         error: None,
         runtime: runtime.clone(),
+        mcp: codex_mcp::inspect(),
     });
 
     let task_login_id = login_id.clone();
@@ -260,6 +263,7 @@ pub(crate) async fn logout() -> Result<CodexAccountStatus, String> {
     let status = CodexAccountStatus {
         installed: true,
         runtime: connection.runtime.clone(),
+        mcp: codex_mcp::inspect(),
         ..CodexAccountStatus::default()
     };
     store_account_status(status.clone());
@@ -610,6 +614,7 @@ async fn wait_for_login_completion(
                     email: None,
                     error: None,
                     runtime: None,
+                    mcp: codex_mcp::inspect(),
                 };
                 if successful || last_status.connected {
                     return Ok(last_status);
@@ -653,6 +658,7 @@ fn account_status_from_result(
             .map(ToString::to_string),
         error,
         runtime: None,
+        mcp: codex_mcp::inspect(),
     }
 }
 
@@ -661,6 +667,7 @@ fn attach_runtime(
     runtime: Option<&CodexRuntimeMetadata>,
 ) -> CodexAccountStatus {
     status.runtime = runtime.cloned();
+    status.mcp = codex_mcp::inspect();
     status
 }
 
