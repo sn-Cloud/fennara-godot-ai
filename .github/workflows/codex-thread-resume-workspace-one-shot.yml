@@ -1,0 +1,31 @@
+name: One-time Codex workspace regression
+
+on:
+  push:
+    branches:
+      - feature/codex-embedded-provider
+    paths:
+      - .github/workflows/codex-thread-resume-workspace-one-shot.yml
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run full Rust workspace tests
+        working-directory: local
+        run: cargo test --workspace
+
+      - name: Record successful verification
+        run: |
+          git config user.name "chatgpt-codex-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git commit --allow-empty -m "test(codex): verify workspace after thread resume coverage"
+          git push origin HEAD:feature/codex-embedded-provider
