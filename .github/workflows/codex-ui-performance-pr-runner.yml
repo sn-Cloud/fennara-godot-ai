@@ -1,0 +1,59 @@
+name: Internal Codex embedded UI performance validation
+
+on:
+  pull_request:
+    branches:
+      - feature/codex-embedded-provider
+    types:
+      - opened
+      - reopened
+      - synchronize
+    paths:
+      - .github/codex-ui-performance-trigger
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  validate:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'validation/codex-ui-performance'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: validation/codex-ui-performance
+          fetch-depth: 0
+
+      - name: Apply embedded UI coalescing
+        run: |
+          python3 -m py_compile .github/scripts/apply_codex_ui_coalescing.py
+          python3 .github/scripts/apply_codex_ui_coalescing.py
+
+      - name: Run transcript renderer coalescing test
+        run: node ui/chat/tests/transcript-renderer-coalescing.test.js
+
+      - name: Verify packaged UI matches source
+        run: cmp ui/chat/transcript-renderer.js godot_demo/addons/fennara/dist/transcript-renderer.js
+
+      - name: Run full Rust workspace tests
+        working-directory: local
+        run: cargo test --workspace
+
+      - name: Check patch cleanliness
+        run: git diff --check
+
+      - name: Commit validated UI performance changes
+        run: |
+          git config user.name "chatgpt-codex-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add \
+            docs/codex-app-server-ownership.md \
+            ui/chat/transcript-renderer.js \
+            ui/chat/tests/transcript-renderer-coalescing.test.js \
+            godot_demo/addons/fennara/dist/transcript-renderer.js
+          git commit -m "perf(codex): coalesce embedded tool card updates"
+          git push origin HEAD:validation/codex-ui-performance
