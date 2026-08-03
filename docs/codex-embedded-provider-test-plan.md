@@ -129,10 +129,10 @@ Every integration test asserts both the user-visible result and the exact protoc
 
 | Case | Expected result |
 | --- | --- |
-| Command approval allow | existing approval UI shown; allow returned to exact RPC request |
-| Command approval deny | deny returned; command not reported as successful |
-| File approval allow | allow returned and item continues |
-| File approval deny | deny returned and item ends denied/failed |
+| Command approval allow | covered by `command_approval_accepts_through_provider_control_channel`; allow returned to exact RPC request |
+| Command approval deny | covered by `command_approval_declines_through_provider_control_channel`; command not reported as successful |
+| File approval allow | covered by `file_approval_accepts_through_provider_control_channel`; item continues |
+| File approval deny | covered by `file_approval_declines_through_provider_control_channel`; item ends denied/failed |
 | Approval timeout | deny/cancel returned; never implicitly allowed |
 | Editor disconnect | pending approval cancelled/denied |
 | Chat cancellation | pending approval cancelled/denied and turn interrupted |
@@ -238,7 +238,7 @@ Acceptance: no sustained editor-frame stall attributable to the provider and no 
 
 ## Existing-provider regression tests
 
-These tests run with Codex unavailable, available and intentionally failing.
+`codex_registration_preserves_existing_provider_registry_and_routing` is the explicit registry and routing guard. The full workspace run remains the functional regression gate for request construction, model resolution, authentication and streaming. These tests run with Codex unavailable, available and intentionally failing.
 
 - OpenAI-compatible providers build the same requests as before.
 - Anthropic-compatible providers build the same requests as before.
@@ -274,6 +274,6 @@ The Draft PR is not ready for maintainer review until these gates pass:
 5. JavaScript syntax/tests for new UI states.
 6. Existing-provider regression suite.
 7. Windows runtime-manager tests using local fixture archives, not live downloads.
-8. A documented manual Windows OAuth and Godot responsiveness result.
+8. A documented manual Windows OAuth and Godot responsiveness result before the Draft PR is promoted to ready-for-review. Use `docs/codex-windows-manual-acceptance.md`.
 
-Real network downloads and real OAuth are never required for ordinary pull-request CI.
+Real network downloads and real OAuth are never required for ordinary pull-request CI. The Draft PR may be opened while the Windows sheet is pending so architecture and implementation can be reviewed together; it must not be marked ready until real measurements are recorded.

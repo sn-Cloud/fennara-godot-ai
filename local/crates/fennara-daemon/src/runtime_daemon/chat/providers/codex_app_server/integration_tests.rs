@@ -385,11 +385,31 @@ async fn command_approval_accepts_through_provider_control_channel() {
 }
 
 #[tokio::test]
+async fn command_approval_declines_through_provider_control_channel() {
+    assert_approval_round_trip(
+        "command-approval",
+        ProviderApprovalKind::CommandExecution,
+        ProviderApprovalDecision::Denied,
+    )
+    .await;
+}
+
+#[tokio::test]
 async fn file_approval_declines_through_provider_control_channel() {
     assert_approval_round_trip(
         "file-approval",
         ProviderApprovalKind::FileChange,
         ProviderApprovalDecision::Denied,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn file_approval_accepts_through_provider_control_channel() {
+    assert_approval_round_trip(
+        "file-approval",
+        ProviderApprovalKind::FileChange,
+        ProviderApprovalDecision::Approved,
     )
     .await;
 }

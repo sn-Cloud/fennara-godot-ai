@@ -1238,4 +1238,72 @@ mod tests {
             Some((types::ProviderId::NVIDIA, "NVIDIA", nvidia::API_KEY_ENV))
         );
     }
+
+    #[test]
+    fn codex_registration_preserves_existing_provider_registry_and_routing() {
+        let registry = public_provider_registry(&ChatSettings::default());
+        let expected = [
+            types::ProviderId::CODEX,
+            types::ProviderId::OPENAI,
+            types::ProviderId::ANTHROPIC,
+            types::ProviderId::OPENROUTER,
+            types::ProviderId::OLLAMA,
+            types::ProviderId::LMSTUDIO,
+            types::ProviderId::OLLAMA_CLOUD,
+            types::ProviderId::DEEPSEEK,
+            types::ProviderId::ZAI,
+            types::ProviderId::MOONSHOTAI,
+            types::ProviderId::MOONSHOTAI_CN,
+            types::ProviderId::KIMI_FOR_CODING,
+            types::ProviderId::MINIMAX,
+            types::ProviderId::MINIMAX_CODING_PLAN,
+            types::ProviderId::MINIMAX_CN,
+            types::ProviderId::MINIMAX_CN_CODING_PLAN,
+            types::ProviderId::NVIDIA,
+        ];
+        for provider_id in expected {
+            let matches = registry
+                .iter()
+                .filter(|provider| provider.id == provider_id)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                matches.len(),
+                1,
+                "provider {provider_id} must remain registered exactly once"
+            );
+            if provider_id == types::ProviderId::CODEX {
+                assert_eq!(matches[0].kind, "agent");
+                assert_eq!(matches[0].auth.kind, "account");
+            } else {
+                assert_ne!(
+                    matches[0].kind, "agent",
+                    "existing provider {provider_id} must not route through Codex"
+                );
+            }
+        }
+        assert_eq!(
+            selected_provider_for_model("openai/gpt-5.1"),
+            Some(types::ProviderId::OPENAI)
+        );
+        assert_eq!(
+            selected_provider_for_model("anthropic/claude-sonnet-4.5"),
+            Some(types::ProviderId::ANTHROPIC)
+        );
+        assert_eq!(
+            selected_provider_for_model("openrouter/openai/gpt-5.1"),
+            Some(types::ProviderId::OPENROUTER)
+        );
+        assert_eq!(
+            selected_provider_for_model("ollama/llama3.2"),
+            Some(types::ProviderId::OLLAMA)
+        );
+        assert_eq!(
+            selected_provider_for_model("lmstudio/local-model"),
+            Some(types::ProviderId::LMSTUDIO)
+        );
+        assert_eq!(
+            selected_provider_for_model("codex/gpt-5-codex"),
+            Some(types::ProviderId::CODEX)
+        );
+    }
 }

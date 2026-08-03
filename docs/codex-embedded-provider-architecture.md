@@ -254,6 +254,20 @@ Compatibility is checked with `codex --version` and an initialize probe. A runti
 
 Protocol fields are decoded defensively. Optional additions are tolerated; missing required methods or incompatible response shapes produce an “incompatible runtime” state rather than a daemon crash.
 
+## T3 Code reference assessment
+
+T3 Code was reviewed as a mature Codex app-server client rather than copied as a dependency. Its separation between app-server process management, provider/session coordination, WebSocket routing and browser event projection supports the same boundary used here: the renderer consumes structured events while a server-side component owns JSON-RPC and child-process lifecycle.
+
+Fennara adopts the following lessons:
+
+- keep app-server process ownership outside the renderer;
+- correlate approvals, thread IDs and turn events at the daemon boundary;
+- resume Codex-owned threads instead of rebuilding them from UI history;
+- normalize provider events before rendering;
+- isolate concurrent sessions and explicitly clean up child processes.
+
+Fennara differs where its host requires it: the daemon is Rust rather than Node.js; Godot operations stay behind Fennara MCP and the Godot bridge; runtime pinning and installation are Fennara responsibilities; and turn-scoped processes preserve durable Codex thread bindings across process and daemon restarts. The official Codex app-server protocol remains authoritative if a reference implementation differs from the pinned protocol.
+
 ## Platform boundaries
 
 Platform-specific code is limited to runtime discovery, installation and process-tree termination.
