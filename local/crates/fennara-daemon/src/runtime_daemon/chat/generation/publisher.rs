@@ -1,15 +1,24 @@
 use axum::extract::ws::Message;
 use futures_util::Sink;
 use serde_json::{Value, json};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::Ordering,
+};
 use tokio::sync::{mpsc, oneshot};
 
-use crate::runtime_daemon::state::AppState;
+use crate::runtime_daemon::{
+    permissions::{
+        ApprovalMode, PendingToolApproval, ToolApprovalRequest, ToolApprovalReview,
+        ToolApprovalStatus, ToolPermissionKind, approval_request_payload,
+    },
+    state::AppState,
+};
 
 use super::super::{
     providers::{
-        ChatCompletion, ChatRequest, FinishReason, LlmError, ProviderSettings, StreamItem,
-        stream_chat,
+        ChatCompletion, ChatRequest, FinishReason, LlmError, ProviderApprovalDecision,
+        ProviderApprovalKind, ProviderApprovalRequest, ProviderSettings, StreamItem, stream_chat,
     },
     send_json, tools, trace,
 };
@@ -44,6 +53,7 @@ pub(super) async fn stream_one_assistant<S>(
     assistant_message_id: &str,
     state: &AppState,
     chat_id: &str,
+    session_id: String,
     project_path: Option<String>,
     approval_mode: String,
     trace: trace::TraceRecorder,
@@ -53,6 +63,7 @@ where
     S::Error: std::fmt::Debug,
 {
     let (item_tx, mut item_rx) = mpsc::unbounded_channel::<StreamItem>();
+    let (approval_tx, mut approval_rx) = mpsc::unbounded_channel::<ProviderApprovalRequest>();
     let (done_tx, done_rx) = oneshot::channel::<Result<ChatCompletion, LlmError>>();
     let model_for_task = model.to_string();
     let reasoning_effort_for_task = reasoning_effort.to_string();
@@ -71,10 +82,12 @@ where
                 messages: messages_for_task,
                 tools: tools_for_task,
                 max_output_tokens: None,
+                chat_id: Some(chat_id_for_task.clone()),
                 cwd: project_path,
                 approval_mode,
             },
             Some(trace_for_task),
+            Some(approval_tx),
             |item| {
                 let item_tx = item_tx.clone();
                 let state_for_item = state_for_task.clone();
@@ -99,8 +112,26 @@ where
     let mut provisional_tools: HashMap<String, ProvisionalTool> = HashMap::new();
     let mut emitted_output = false;
     let mut done_rx = done_rx;
+    let mut approval_channel_open = true;
     let completion = loop {
         tokio::select! {
+            approval = approval_rx.recv(), if approval_channel_open => {
+                match approval {
+                    Some(approval) => {
+                        handle_provider_approval(
+                            sender,
+                            request_id.clone(),
+                            state,
+                            chat_id,
+                            &session_id,
+                            approval,
+                            &trace,
+                        )
+                        .await?;
+                    }
+                    None => approval_channel_open = false,
+                }
+            }
             item = item_rx.recv() => {
                 let Some(item) = item else {
                     continue;
@@ -197,6 +228,41 @@ where
                                     "type": "function_call",
                                     "name": name,
                                     "arguments": arguments,
+                                    "status": status
+                                }
+                            }),
+                        )
+                        .await?;
+                    }
+                    StreamItem::ExternalTool {
+                        id,
+                        name,
+                        arguments,
+                        content,
+                        status,
+                    } => {
+                        let terminal = external_tool_status_is_terminal(&status);
+                        trace.with_tool_call(id.clone()).event_status(
+                            "provider.external_tool.updated",
+                            &status,
+                            json!({
+                                "tool_name": name.as_str(),
+                                "arguments_bytes": arguments.len(),
+                                "content_bytes": content.len(),
+                                "terminal": terminal
+                            }),
+                        );
+                        send_json(
+                            sender,
+                            json!({
+                                "type": "chat_item_update",
+                                "request_id": request_id.clone(),
+                                "item": {
+                                    "id": id,
+                                    "type": if terminal { "tool_result" } else { "function_call" },
+                                    "name": name,
+                                    "arguments": arguments,
+                                    "content": content,
                                     "status": status
                                 }
                             }),
@@ -335,11 +401,144 @@ where
     }
 }
 
+async fn handle_provider_approval<S>(
+    sender: &mut S,
+    request_id: Option<String>,
+    state: &AppState,
+    chat_id: &str,
+    session_id: &str,
+    approval: ProviderApprovalRequest,
+    trace: &trace::TraceRecorder,
+) -> Result<(), S::Error>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Debug,
+{
+    let approval_id = format!(
+        "provider-approval-{}",
+        state.request_counter.fetch_add(1, Ordering::Relaxed) + 1
+    );
+    let tool_kind = match approval.kind {
+        ProviderApprovalKind::CommandExecution => ToolPermissionKind::ExecutesProject,
+        ProviderApprovalKind::FileChange => ToolPermissionKind::MutatesProject,
+    };
+    let (review_tx, review_rx) = oneshot::channel();
+    let request = ToolApprovalRequest {
+        id: approval_id.clone(),
+        chat_id: chat_id.to_string(),
+        session_id: session_id.to_string(),
+        tool_call_id: approval.item_id.clone(),
+        tool_name: approval.kind.tool_name().to_string(),
+        tool_kind,
+        tool_kind_label: tool_kind.label(),
+        approval_mode: ApprovalMode::Ask,
+        status: ToolApprovalStatus::PendingApproval,
+        reason: approval.summary.clone(),
+        summary: approval.summary.clone(),
+    };
+    state.pending_tool_approvals.write().await.insert(
+        approval_id.clone(),
+        PendingToolApproval {
+            request: request.clone(),
+            responder: review_tx,
+        },
+    );
+    trace.with_approval(approval_id.clone()).event_status(
+        "provider.approval.requested",
+        "pending",
+        json!({
+            "kind": approval.kind.label(),
+            "item_id": approval.item_id,
+            "thread_id": approval.thread_id,
+            "turn_id": approval.turn_id
+        }),
+    );
+    send_provider_approval_update(
+        sender,
+        request_id.clone(),
+        &approval,
+        &request,
+        ToolApprovalStatus::PendingApproval.as_str(),
+    )
+    .await?;
+
+    let review =
+        super::tool_loop::wait_for_tool_approval(state, chat_id, &approval_id, review_rx).await;
+    let (provider_decision, status, ui_status) = match review {
+        ToolApprovalReview::Approved => (
+            ProviderApprovalDecision::Approved,
+            ToolApprovalStatus::Approved,
+            "approved",
+        ),
+        ToolApprovalReview::Denied => (
+            ProviderApprovalDecision::Denied,
+            ToolApprovalStatus::Denied,
+            "denied",
+        ),
+        ToolApprovalReview::TimedOut => (
+            ProviderApprovalDecision::Denied,
+            ToolApprovalStatus::Denied,
+            "timed_out",
+        ),
+        ToolApprovalReview::Cancelled => (
+            ProviderApprovalDecision::Cancelled,
+            ToolApprovalStatus::Cancelled,
+            "cancelled",
+        ),
+    };
+    let resolved = ToolApprovalRequest { status, ..request };
+    trace.with_approval(approval_id).event_status(
+        "provider.approval.resolved",
+        ui_status,
+        json!({ "kind": approval.kind.label() }),
+    );
+    send_provider_approval_update(sender, request_id, &approval, &resolved, ui_status).await?;
+    let _ = approval.responder.send(provider_decision);
+    Ok(())
+}
+
+async fn send_provider_approval_update<S>(
+    sender: &mut S,
+    request_id: Option<String>,
+    approval: &ProviderApprovalRequest,
+    request: &ToolApprovalRequest,
+    status: &str,
+) -> Result<(), S::Error>
+where
+    S: Sink<Message> + Unpin,
+{
+    send_json(
+        sender,
+        json!({
+            "type": "chat_item_update",
+            "request_id": request_id,
+            "item": {
+                "id": approval.item_id,
+                "type": "function_call",
+                "name": approval.kind.tool_name(),
+                "arguments": approval.details.to_string(),
+                "content": approval.summary,
+                "status": status,
+                "approval": approval_request_payload(request)
+            }
+        }),
+    )
+    .await
+}
+
+fn external_tool_status_is_terminal(status: &str) -> bool {
+    matches!(
+        status,
+        "done" | "completed" | "failed" | "timed_out" | "cancelled" | "denied"
+    )
+}
+
 fn stream_item_has_assistant_output(item: &StreamItem) -> bool {
     match item {
         StreamItem::Text { .. }
         | StreamItem::FunctionCall { .. }
-        | StreamItem::FunctionCallError { .. } => true,
+        | StreamItem::FunctionCallError { .. }
+        | StreamItem::ExternalTool { .. } => true,
         StreamItem::Reasoning { content, .. } => !content.trim().is_empty(),
         StreamItem::Status { .. } | StreamItem::Usage(_) => false,
     }

@@ -9,6 +9,7 @@ pub(crate) struct LlmRequest {
     pub(crate) model: ResolvedModel,
     pub(crate) messages: Vec<Value>,
     pub(crate) tools: Vec<Value>,
+    pub(crate) chat_id: Option<String>,
     pub(crate) cwd: Option<String>,
     pub(crate) approval_mode: String,
 }
@@ -31,6 +32,7 @@ impl LlmRequest {
             model,
             messages: request.messages.clone(),
             tools: request.tools.clone(),
+            chat_id: request.chat_id.clone(),
             cwd: request.cwd.clone(),
             approval_mode: request.approval_mode.clone(),
         })

@@ -94,10 +94,95 @@ pub(crate) struct StartedGeneration {
     pub(crate) id: String,
 }
 
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ProviderSessionBinding {
+    pub(crate) chat_id: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_thread_id: String,
+    pub(crate) codex_home_key: String,
+    pub(crate) runtime_version: Option<String>,
+    pub(crate) resume_status: String,
+    pub(crate) created_at_ms: i64,
+    pub(crate) updated_at_ms: i64,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ToolImageFile {
     pub(crate) file_path: String,
     pub(crate) mime_type: String,
+}
+
+pub(crate) fn provider_session_binding(
+    chat_id: &str,
+    provider_id: &str,
+) -> Result<Option<ProviderSessionBinding>, String> {
+    let conn = connection()?;
+    conn.query_row(
+        "SELECT chat_id, provider_id, provider_thread_id, codex_home_key,
+                runtime_version, resume_status, created_at_ms, updated_at_ms
+         FROM chat_provider_sessions
+         WHERE chat_id = ?1 AND provider_id = ?2",
+        params![chat_id, provider_id],
+        |row| {
+            Ok(ProviderSessionBinding {
+                chat_id: row.get(0)?,
+                provider_id: row.get(1)?,
+                provider_thread_id: row.get(2)?,
+                codex_home_key: row.get(3)?,
+                runtime_version: row.get(4)?,
+                resume_status: row.get(5)?,
+                created_at_ms: row.get(6)?,
+                updated_at_ms: row.get(7)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(to_store_error)
+}
+
+pub(crate) fn upsert_provider_session_binding(
+    chat_id: &str,
+    provider_id: &str,
+    provider_thread_id: &str,
+    codex_home_key: &str,
+    runtime_version: Option<&str>,
+) -> Result<(), String> {
+    let conn = connection()?;
+    let now = now_ms();
+    conn.execute(
+        "INSERT INTO chat_provider_sessions
+         (chat_id, provider_id, provider_thread_id, codex_home_key, runtime_version,
+          resume_status, created_at_ms, updated_at_ms)
+         VALUES (?1, ?2, ?3, ?4, ?5, 'ready', ?6, ?6)
+         ON CONFLICT(chat_id, provider_id) DO UPDATE SET
+           provider_thread_id = excluded.provider_thread_id,
+           codex_home_key = excluded.codex_home_key,
+           runtime_version = excluded.runtime_version,
+           resume_status = 'ready',
+           updated_at_ms = excluded.updated_at_ms",
+        params![
+            chat_id,
+            provider_id,
+            provider_thread_id,
+            codex_home_key,
+            runtime_version,
+            now
+        ],
+    )
+    .map_err(to_store_error)?;
+    Ok(())
+}
+
+pub(crate) fn mark_provider_session_broken(chat_id: &str, provider_id: &str) -> Result<(), String> {
+    let conn = connection()?;
+    conn.execute(
+        "UPDATE chat_provider_sessions
+         SET resume_status = 'broken', updated_at_ms = ?3
+         WHERE chat_id = ?1 AND provider_id = ?2",
+        params![chat_id, provider_id, now_ms()],
+    )
+    .map_err(to_store_error)?;
+    Ok(())
 }
 
 pub(crate) fn list_chats(scope: &ProjectScope) -> Result<Vec<ChatSummary>, String> {

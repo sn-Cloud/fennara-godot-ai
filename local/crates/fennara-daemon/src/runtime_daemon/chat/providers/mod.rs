@@ -6,7 +6,11 @@ mod catalog;
 pub(crate) mod catalog_cache;
 mod codex;
 pub(crate) mod codex_app_server;
+pub(crate) mod codex_managed_runtime;
+pub(crate) mod codex_mcp;
+mod codex_runtime;
 mod context;
+mod control;
 pub(crate) mod custom;
 mod deepseek;
 mod error;
@@ -38,6 +42,9 @@ use request::LlmRequest;
 use stream::StreamEvent;
 use tokio::sync::Mutex;
 
+pub(crate) use control::{
+    ProviderApprovalDecision, ProviderApprovalKind, ProviderApprovalRequest, ProviderApprovalSender,
+};
 pub(crate) use error::LlmError;
 pub(crate) use request::build_messages;
 pub(crate) use stream::FinishReason;
@@ -425,6 +432,7 @@ pub(crate) async fn stream_chat<F, Fut>(
     settings: &ProviderSettings,
     request: &ChatRequest,
     trace: Option<TraceRecorder>,
+    approval_tx: Option<ProviderApprovalSender>,
     on_item: F,
 ) -> Result<ChatCompletion, LlmError>
 where
@@ -489,7 +497,7 @@ where
             .await?
         }
         types::AdapterKind::CodexAppServer => {
-            codex_app_server::stream_chat(&llm_request, {
+            codex_app_server::stream_chat(&llm_request, approval_tx, {
                 let accumulator = Arc::clone(&accumulator);
                 let on_item = Arc::clone(&on_item);
                 move |event| {
@@ -565,6 +573,7 @@ pub(crate) fn model_context_estimate(
             messages: vec![json!({ "role": "user", "content": "" })],
             tools: Vec::new(),
             max_output_tokens: None,
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         },
@@ -582,6 +591,7 @@ pub(crate) fn selected_model_supports_image_input(
         messages: vec![json!({ "role": "user", "content": "" })],
         tools: Vec::new(),
         max_output_tokens: None,
+        chat_id: None,
         cwd: None,
         approval_mode: "ask".to_string(),
     };
@@ -689,6 +699,21 @@ impl StreamAccumulator {
                     name,
                     arguments,
                     message,
+                });
+            }
+            StreamEvent::ExternalToolActivity {
+                id,
+                name,
+                arguments,
+                content,
+                status,
+            } => {
+                items.push(StreamItem::ExternalTool {
+                    id,
+                    name,
+                    arguments,
+                    content,
+                    status,
                 });
             }
             StreamEvent::Status { message } => {
@@ -957,6 +982,59 @@ pub(crate) fn parse_model_ref(model: &str) -> Result<String, LlmError> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn burst_text_events_are_coalesced_before_ui_delivery() {
+        let mut accumulator = StreamAccumulator::default();
+        let mut intermediate_updates = 0usize;
+        for _ in 0..10_000 {
+            intermediate_updates += accumulator
+                .items_for_event(StreamEvent::TextDelta {
+                    id: "codex-agent".to_string(),
+                    text: "x".to_string(),
+                })
+                .unwrap()
+                .len();
+        }
+        let final_items = accumulator
+            .items_for_event(StreamEvent::Finish {
+                reason: FinishReason::Stop,
+                usage: None,
+            })
+            .unwrap();
+        assert!(
+            intermediate_updates <= 417,
+            "10,000 byte deltas produced {intermediate_updates} UI updates"
+        );
+        let final_text = final_items
+            .iter()
+            .find_map(|item| match item {
+                StreamItem::Text {
+                    content,
+                    done: true,
+                } => Some(content),
+                _ => None,
+            })
+            .expect("final coalesced text item");
+        assert_eq!(final_text.len(), 10_000);
+    }
+
+    #[test]
+    fn external_mcp_activity_does_not_create_fennara_tool_call() {
+        let mut accumulator = StreamAccumulator::default();
+        let items = accumulator
+            .items_for_event(StreamEvent::ExternalToolActivity {
+                id: "mcp-1".to_string(),
+                name: "fennara · get_scene_tree".to_string(),
+                arguments: "{}".to_string(),
+                content: "scene tree".to_string(),
+                status: "completed".to_string(),
+            })
+            .unwrap();
+        assert_eq!(accumulator.observed_tool_calls, 0);
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items[0], StreamItem::ExternalTool { .. }));
+    }
+
     fn custom_provider_config() -> custom::CustomProviderConfig {
         custom::CustomProviderConfig {
             id: "omniroute".to_string(),
@@ -1158,6 +1236,74 @@ mod tests {
         assert_eq!(
             auth_provider_for_model("nvidia/meta/llama-3.3-70b-instruct"),
             Some((types::ProviderId::NVIDIA, "NVIDIA", nvidia::API_KEY_ENV))
+        );
+    }
+
+    #[test]
+    fn codex_registration_preserves_existing_provider_registry_and_routing() {
+        let registry = public_provider_registry(&ChatSettings::default());
+        let expected = [
+            types::ProviderId::CODEX,
+            types::ProviderId::OPENAI,
+            types::ProviderId::ANTHROPIC,
+            types::ProviderId::OPENROUTER,
+            types::ProviderId::OLLAMA,
+            types::ProviderId::LMSTUDIO,
+            types::ProviderId::OLLAMA_CLOUD,
+            types::ProviderId::DEEPSEEK,
+            types::ProviderId::ZAI,
+            types::ProviderId::MOONSHOTAI,
+            types::ProviderId::MOONSHOTAI_CN,
+            types::ProviderId::KIMI_FOR_CODING,
+            types::ProviderId::MINIMAX,
+            types::ProviderId::MINIMAX_CODING_PLAN,
+            types::ProviderId::MINIMAX_CN,
+            types::ProviderId::MINIMAX_CN_CODING_PLAN,
+            types::ProviderId::NVIDIA,
+        ];
+        for provider_id in expected {
+            let matches = registry
+                .iter()
+                .filter(|provider| provider.id == provider_id)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                matches.len(),
+                1,
+                "provider {provider_id} must remain registered exactly once"
+            );
+            if provider_id == types::ProviderId::CODEX {
+                assert_eq!(matches[0].kind, "agent");
+                assert_eq!(matches[0].auth.kind, "account");
+            } else {
+                assert_ne!(
+                    matches[0].kind, "agent",
+                    "existing provider {provider_id} must not route through Codex"
+                );
+            }
+        }
+        assert_eq!(
+            selected_provider_for_model("openai/gpt-5.1"),
+            Some(types::ProviderId::OPENAI)
+        );
+        assert_eq!(
+            selected_provider_for_model("anthropic/claude-sonnet-4.5"),
+            Some(types::ProviderId::ANTHROPIC)
+        );
+        assert_eq!(
+            selected_provider_for_model("openrouter/openai/gpt-5.1"),
+            Some(types::ProviderId::OPENROUTER)
+        );
+        assert_eq!(
+            selected_provider_for_model("ollama/llama3.2"),
+            Some(types::ProviderId::OLLAMA)
+        );
+        assert_eq!(
+            selected_provider_for_model("lmstudio/local-model"),
+            Some(types::ProviderId::LMSTUDIO)
+        );
+        assert_eq!(
+            selected_provider_for_model("codex/gpt-5-codex"),
+            Some(types::ProviderId::CODEX)
         );
     }
 }

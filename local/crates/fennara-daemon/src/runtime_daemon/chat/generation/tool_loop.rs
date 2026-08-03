@@ -580,7 +580,7 @@ async fn create_tool_approval(
     (request, approval_rx)
 }
 
-async fn wait_for_tool_approval(
+pub(super) async fn wait_for_tool_approval(
     state: &AppState,
     chat_id: &str,
     approval_id: &str,

@@ -174,8 +174,12 @@ where
             "tool_image_followups": allow_tool_image_followups
         }),
     );
-    let summary_budgets =
-        summary_budgets_for_model(&provider_settings, &model, &reasoning_effort, &trace);
+    let is_codex_provider = model.starts_with("codex/");
+    let summary_budgets = if is_codex_provider {
+        None
+    } else {
+        summary_budgets_for_model(&provider_settings, &model, &reasoning_effort, &trace)
+    };
 
     let replay_span = trace.start_span("prompt.replay", json!({ "chat_id": chat_id.as_str() }));
     let mut replay_messages = match replay_messages_for_budget(&chat_id, summary_budgets) {
@@ -498,6 +502,7 @@ where
             &current_assistant.id,
             state,
             &chat_id,
+            bound_project.session_id.clone(),
             scope.project_path.clone(),
             settings.approval_mode.as_str().to_string(),
             current_trace.clone(),
@@ -1299,6 +1304,7 @@ fn estimate_provider_input_tokens(
             messages: provider_messages.to_vec(),
             tools: tools::definitions(),
             max_output_tokens: None,
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         },
@@ -1362,6 +1368,7 @@ async fn try_create_context_summary(
             messages: summary_messages.clone(),
             tools: Vec::new(),
             max_output_tokens: Some(summary_output_max_tokens),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         },
@@ -1387,9 +1394,11 @@ async fn try_create_context_summary(
             messages: summary_messages,
             tools: Vec::new(),
             max_output_tokens: Some(summary_output_max_tokens),
+            chat_id: None,
             cwd: None,
             approval_mode: "ask".to_string(),
         },
+        None,
         None,
         move |item| {
             let usage_for_stream = Arc::clone(&usage_for_stream);

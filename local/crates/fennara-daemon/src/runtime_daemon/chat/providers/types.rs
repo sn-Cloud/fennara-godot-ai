@@ -306,6 +306,7 @@ pub(crate) struct ChatRequest {
     pub(crate) messages: Vec<Value>,
     pub(crate) tools: Vec<Value>,
     pub(crate) max_output_tokens: Option<u32>,
+    pub(crate) chat_id: Option<String>,
     pub(crate) cwd: Option<String>,
     pub(crate) approval_mode: String,
 }
@@ -331,6 +332,13 @@ pub(crate) enum StreamItem {
         name: String,
         arguments: String,
         message: String,
+    },
+    ExternalTool {
+        id: String,
+        name: String,
+        arguments: String,
+        content: String,
+        status: String,
     },
     Status {
         message: String,

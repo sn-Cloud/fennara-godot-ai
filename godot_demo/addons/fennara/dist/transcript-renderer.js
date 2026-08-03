@@ -20,8 +20,19 @@
     let pendingAssistantText = null;
     let pendingAssistantStick = false;
     let assistantRenderFrame = 0;
+    let pendingToolStick = false;
     let streamActive = false;
     let streamFollowing = false;
+    const toolRenderQueue = createFrameCoalescer({
+      requestFrame: (callback) => window.requestAnimationFrame(callback),
+      cancelFrame: (frame) => window.cancelAnimationFrame(frame),
+      onFlush(items) {
+        const shouldStick = pendingToolStick;
+        pendingToolStick = false;
+        items.forEach(renderToolCall);
+        keepBottomIfNeeded(shouldStick);
+      },
+    });
 
     transcript?.addEventListener(
       "scroll",
@@ -45,6 +56,7 @@
       contextCompactionMarker = null;
       streamActive = false;
       streamFollowing = false;
+      clearPendingToolRenders();
       clearPendingAssistantRender();
       if (resetCost) {
         onResetCost?.();
@@ -107,6 +119,7 @@
     }
 
     function beginStream() {
+      flushToolRenders();
       flushAssistantRender();
       streamActive = true;
       streamFollowing = isNearBottom();
@@ -114,6 +127,7 @@
     }
 
     function endStream() {
+      flushToolRenders();
       flushAssistantRender();
       clearGenerationStatus();
       keepBottomIfNeeded(streamFollowing);
@@ -247,6 +261,7 @@
     }
 
     function resetStreamState() {
+      flushToolRenders();
       flushAssistantRender();
       clearGenerationStatus();
       activeAssistant = null;
@@ -255,6 +270,7 @@
     }
 
     function resetActiveAssistant() {
+      flushToolRenders();
       flushAssistantRender();
       activeAssistant = null;
       activeToolAnchor = null;
@@ -266,6 +282,7 @@
     }
 
     function startThinkingCard() {
+      flushToolRenders();
       const card = document.createElement("details");
       card.className = "thinking-card";
       card.open = true;
@@ -333,6 +350,7 @@
     }
 
     function updateAssistantText(text) {
+      flushToolRenders();
       if (!activeAssistant && !String(text || "").trim()) {
         return;
       }
@@ -378,7 +396,22 @@
 
     function updateToolCall(item) {
       clearGenerationStatus();
-      const shouldStick = isNearBottom();
+      const update = item || {};
+      const id = update.id || "tool_call";
+      pendingToolStick = pendingToolStick || isNearBottom();
+      toolRenderQueue.schedule(id, update);
+    }
+
+    function flushToolRenders() {
+      toolRenderQueue.flush();
+    }
+
+    function clearPendingToolRenders() {
+      toolRenderQueue.clear();
+      pendingToolStick = false;
+    }
+
+    function renderToolCall(item) {
       const id = item.id || "tool_call";
       let node = activeTools.get(id);
       if (!node || !node.isConnected) {
@@ -428,9 +461,7 @@
         }
         renderToolApproval(body, item.approval);
       }
-      keepBottomIfNeeded(shouldStick);
     }
-
     function isTerminalToolStatus(status) {
       return status === "done" ||
         status === "completed" ||
@@ -988,11 +1019,62 @@
     };
   }
 
+  function createFrameCoalescer(options) {
+    const pending = new Map();
+    let frame = 0;
+
+    function drain() {
+      if (!pending.size) {
+        return;
+      }
+      const values = Array.from(pending.values());
+      pending.clear();
+      options.onFlush(values);
+    }
+
+    function schedule(key, value) {
+      pending.set(String(key), value);
+      if (frame) {
+        return;
+      }
+      frame = options.requestFrame(() => {
+        frame = 0;
+        drain();
+      });
+    }
+
+    function flush() {
+      if (frame) {
+        options.cancelFrame(frame);
+        frame = 0;
+      }
+      drain();
+    }
+
+    function clear() {
+      if (frame) {
+        options.cancelFrame(frame);
+        frame = 0;
+      }
+      pending.clear();
+    }
+
+    return {
+      schedule,
+      flush,
+      clear,
+      pendingCount: () => pending.size,
+    };
+  }
+
   function normalizeMarkdown(text) {
     return text
       .replace(/^H([1-6]):\s+/gim, (_match, level) => "#".repeat(Number(level)) + " ")
       .replace(/^!\s*\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/gim, "![$1]($2)");
   }
 
-  window.FennaraTranscriptRenderer = { createTranscriptRenderer };
+  window.FennaraTranscriptRenderer = {
+    createTranscriptRenderer,
+    _createFrameCoalescer: createFrameCoalescer,
+  };
 })();

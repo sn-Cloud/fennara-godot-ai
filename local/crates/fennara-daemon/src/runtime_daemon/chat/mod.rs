@@ -9,8 +9,13 @@ use axum::{
 use futures_util::{Sink, SinkExt, StreamExt};
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
-use tokio::sync::broadcast;
+use std::{
+    collections::BTreeMap,
+    fmt,
+    pin::Pin,
+    task::{Context as TaskContext, Poll},
+};
+use tokio::sync::{broadcast, mpsc};
 
 use super::{DAEMON_HOST, DAEMON_PORT, permissions::ToolApprovalReview, state::AppState};
 use crate::runtime_daemon::godot_bridge;
@@ -71,6 +76,58 @@ struct ClientRequest {
     refresh_local: Option<bool>,
     chat_surface: Option<String>,
     mcp_target: Option<String>,
+}
+
+#[derive(Clone)]
+struct ChatOutbound {
+    sender: mpsc::UnboundedSender<Message>,
+}
+
+#[derive(Debug)]
+struct ChatOutboundError;
+
+impl fmt::Display for ChatOutboundError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("chat websocket writer is unavailable")
+    }
+}
+
+impl std::error::Error for ChatOutboundError {}
+
+impl Sink<Message> for ChatOutbound {
+    type Error = ChatOutboundError;
+
+    fn poll_ready(
+        self: Pin<&mut Self>,
+        _context: &mut TaskContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        if self.get_mut().sender.is_closed() {
+            Poll::Ready(Err(ChatOutboundError))
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+        self.get_mut()
+            .sender
+            .send(item)
+            .map_err(|_| ChatOutboundError)
+    }
+
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _context: &mut TaskContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(
+        self: Pin<&mut Self>,
+        _context: &mut TaskContext<'_>,
+    ) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
 }
 
 #[derive(Clone)]
@@ -149,7 +206,18 @@ async fn project_for_chat_token(state: &AppState, token: Option<&str>) -> Option
 }
 
 async fn handle_chat_socket(socket: WebSocket, state: AppState, bound_project: BoundChatProject) {
-    let (mut sender, mut receiver) = socket.split();
+    let (mut socket_sender, mut receiver) = socket.split();
+    let (outbound_tx, mut outbound_rx) = mpsc::unbounded_channel::<Message>();
+    let writer_task = tokio::spawn(async move {
+        while let Some(message) = outbound_rx.recv().await {
+            if socket_sender.send(message).await.is_err() {
+                break;
+            }
+        }
+    });
+    let mut sender = ChatOutbound {
+        sender: outbound_tx,
+    };
     let mut active_chat_id: Option<String> = None;
     let mut context_receiver = state.chat_context_sender.subscribe();
 
@@ -173,6 +241,26 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState, bound_project: B
                                 send_error(&mut sender, None, "bad_request", "Invalid chat request.").await;
                             continue;
                         };
+                        if request.request_type == "send_chat" {
+                            let mut task_sender = sender.clone();
+                            let mut task_active_chat_id = request
+                                .chat_id
+                                .clone()
+                                .or_else(|| active_chat_id.clone());
+                            let task_state = state.clone();
+                            let task_project = bound_project.clone();
+                            tokio::spawn(async move {
+                                let _ = generation::runner::run_chat(
+                                    &mut task_sender,
+                                    &mut task_active_chat_id,
+                                    &task_state,
+                                    &task_project,
+                                    request,
+                                )
+                                .await;
+                            });
+                            continue;
+                        }
                         if handle_request(
                             &mut sender,
                             &mut active_chat_id,
@@ -206,6 +294,7 @@ async fn handle_chat_socket(socket: WebSocket, state: AppState, bound_project: B
             }
         }
     }
+    writer_task.abort();
 }
 
 async fn send_initial_state<S>(
@@ -284,6 +373,81 @@ where
             .await
         }
         "get_project_status" => send_project_status(sender, request_id, state, bound_project).await,
+        "codex_runtime_status" => {
+            let status = providers::codex_managed_runtime::status().await;
+            send_json(
+                sender,
+                json!({
+                    "type": "codex_runtime_status",
+                    "request_id": request_id,
+                    "status": status
+                }),
+            )
+            .await
+        }
+        "codex_runtime_install_start" => {
+            match providers::codex_managed_runtime::start_install().await {
+                Ok(status) => {
+                    send_json(
+                        sender,
+                        json!({
+                            "type": "codex_runtime_status",
+                            "request_id": request_id,
+                            "status": status
+                        }),
+                    )
+                    .await
+                }
+                Err(error) => {
+                    send_error(sender, request_id, "codex_runtime_install_failed", &error).await
+                }
+            }
+        }
+        "codex_runtime_install_cancel" => {
+            match providers::codex_managed_runtime::cancel_install().await {
+                Ok(status) => {
+                    send_json(
+                        sender,
+                        json!({
+                            "type": "codex_runtime_status",
+                            "request_id": request_id,
+                            "status": status
+                        }),
+                    )
+                    .await
+                }
+                Err(error) => {
+                    send_error(sender, request_id, "codex_runtime_cancel_failed", &error).await
+                }
+            }
+        }
+        "codex_mcp_status" => {
+            send_json(
+                sender,
+                json!({
+                    "type": "codex_mcp_status",
+                    "request_id": request_id,
+                    "status": providers::codex_mcp::inspect()
+                }),
+            )
+            .await
+        }
+        "codex_mcp_setup" => match mcp_setup::run("codex").await {
+            Ok(result) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_mcp_setup_completed",
+                        "request_id": request_id,
+                        "status": providers::codex_mcp::inspect(),
+                        "report": result.report,
+                        "warning": result.warning
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_mcp_setup_failed", &error).await,
+        },
         "codex_account_status" => match providers::codex_app_server::account_status().await {
             Ok(status) => {
                 send_json(
@@ -311,6 +475,20 @@ where
                 .await
             }
             Err(error) => send_error(sender, request_id, "codex_login_failed", &error).await,
+        },
+        "codex_login_cancel" => match providers::codex_app_server::cancel_login() {
+            Ok(status) => {
+                send_json(
+                    sender,
+                    json!({
+                        "type": "codex_account_status",
+                        "request_id": request_id,
+                        "status": status
+                    }),
+                )
+                .await
+            }
+            Err(error) => send_error(sender, request_id, "codex_login_cancel_failed", &error).await,
         },
         "codex_logout" => match providers::codex_app_server::logout().await {
             Ok(status) => {

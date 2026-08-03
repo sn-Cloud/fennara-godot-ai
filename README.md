@@ -43,6 +43,12 @@ Codex 会员登录通过本机安装的 OpenAI Codex CLI 和 `codex app-server -
 | Kimi 会员账号登录 | 不属于本仓库 |
 | Godot MCP Native | 不属于本仓库 |
 
+### Codex app-server 架构与验收
+
+Codex 内置聊天的命令路由、事件渲染、审批与沙箱、线程与历史、上下文压缩、认证与 `CODEX_HOME`、进程生命周期、版本兼容策略及自动化验收矩阵，见：
+
+- [Codex app-server ownership boundaries and acceptance matrix](docs/codex-app-server-ownership.md)
+
 ### OpenAI 登录方式说明
 
 本仓库同时支持两种彼此独立的 OpenAI 使用方式。
