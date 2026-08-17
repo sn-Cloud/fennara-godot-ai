@@ -1,5 +1,9 @@
 # Repo Map
 
+<!-- fennara-doc-nav:start -->
+**English** · [简体中文](i18n/zh-CN/repo-map.md) · [Español](i18n/es/repo-map.md) · [Português do Brasil](i18n/pt-BR/repo-map.md) · [日本語](i18n/ja/repo-map.md) · [한국어](i18n/ko/repo-map.md) · [Русский](i18n/ru/repo-map.md) · [Français](i18n/fr/repo-map.md) · [Deutsch](i18n/de/repo-map.md) · [Türkçe](i18n/tr/repo-map.md)
+<!-- fennara-doc-nav:end -->
+
 This is the quick map for contributors and coding agents working in this repository.
 
 ## Find The Right Area
@@ -21,6 +25,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | --- | --- |
 | `.github/` | Pull request template, issue templates, and GitHub Actions workflows. |
 | `docs/` | Project docs, setup guides, architecture notes, examples, demos, and release notes. |
+| `docs/i18n/` | Locale manifest and complete translated documentation trees. |
 | `fennara-cpp/` | C++ Godot GDExtension source and SCons build entrypoint. |
 | `godot_demo/addons/fennara/` | Installable Godot addon payload copied into user projects. |
 | `local/` | Rust CLI, MCP server, daemon, schemas, and local runtime code. |
@@ -49,6 +54,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | `local/crates/fennara-cli/src/operation.rs` | Public install/update operation coordinator, phases, and CLI handoff entry points. |
 | `local/crates/fennara-cli/src/operation/` | Focused operation journal, durable storage, diagnostic redaction, and test modules. |
 | `local/crates/fennara-cli/src/project_addon.rs` | Existing project-addon version and current-platform GDExtension library validation. |
+| `local/crates/fennara-cli/src/prepare_export.rs` | Addon-free CI export preparation that removes only Fennara's persistent runtime autoload before Godot starts. |
 | `local/crates/fennara-cli/src/release_identity.rs` | Stable/staging addon identity, exact release selectors, pull-request channel validation, and legacy stable compatibility. |
 | `local/crates/fennara-cli/src/release_channel.rs` | Per-channel staging pointer validation and resolution to an exact versioned release. |
 | `local/crates/fennara-cli/src/release_manifest.rs` | Release manifest parsing, asset hash validation, identity binding, and platform package selection. |
@@ -87,6 +93,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | `fennara-cpp/src/ui/setup_panel.cpp` | Webview-independent first-run setup panel with progress, retry, logs, and sanitized report actions. |
 | `fennara-cpp/vendor/cef/` | Official CEF 139 header snapshot used by the Linux OSR bridge. Runtime binaries stay outside the addon. |
 | `fennara-cpp/src/ui/webview_host*` | Native in-editor chat webview host and platform backends. |
+| `fennara-cpp/src/ui/native_webview_occlusion.*` | Shared Windows and macOS detection that temporarily suppresses a native webview overlay while overlapping Godot popup or top-level editor UI is visible. |
 | `fennara-cpp/src/ui/linux_cef_runtime.*` | Linux-only shared CEF runtime discovery, marker validation, and dynamic `libcef.so` loader foundation. |
 | `fennara-cpp/src/ui/linux_cef_osr.*` / `linux_cef_input.*` / `linux_cef_bridge_loader.*` / `linux_cef_bridge_api.hpp` | Linux-only CEF off-screen rendering surface, Godot input forwarding, bridge ABI loading, and Godot texture updates for the internal chat webview. |
 | `fennara-cpp/src/ui/linux_cef_bridge/` | Small Linux-only bridge library built from the pinned official CEF 139 `libcef_dll_wrapper` source and Fennara's CEF OSR adapter. The main GDExtension dlopens this after the external `libcef.so` runtime is loaded. |
@@ -107,6 +114,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | `godot_demo/addons/fennara/dist/` | Packaged web UI assets used by the in-editor chat webview. |
 | `godot_demo/addons/fennara/runtime/` | Synced packaged copy of `runtime/` shipped inside the addon. |
 | `godot_demo/tests/first_run_setup_test.gd` | Headless native first-run setup state and deterministic failure test. |
+| `godot_demo/tests/export_plugin_test.gd` | Headless native export exclusion and autoload restoration regression test. |
 | `godot_demo/tests/screenshot_scene_contract_test.gd` | Headless native screenshot argument-contract regression test. |
 | `godot_demo/tests/image_sheet_test.gd` | Headless shared screenshot/runtime sheet composition regression test. |
 | `godot_demo/tests/runtime_image_context_test.gd` | Headless runtime raw-frame, sheet, and arbitrary-Image output regression test. |
@@ -145,6 +153,8 @@ This is the quick map for contributors and coding agents working in this reposit
 | `scripts/write-staging-candidate.mjs` / `scripts/write-staging-pointer.mjs` | Write the frozen candidate identity and its small channel pointer. |
 | `scripts/sync-chat-ui.mjs` | Copies the buildless chat UI source into the addon payload. |
 | `scripts/sync-runtime.mjs` | Copies repo-root runtime helper source into the addon payload. |
+| `scripts/sync-doc-navigation.mjs` | Adds documentation navigation, source hashes, and stable anchors without translating prose. |
+| `scripts/check-doc-i18n.mjs` / `scripts/doc-i18n-lib.mjs` | Validate translation coverage, freshness, Markdown structure, URLs, and links. |
 | `scripts/package-preview.mjs` | Assembles addon, CLI, and local runtime preview/release zips after platform builds. |
 | `scripts/prepare-linux-cef-runtime.mjs` | Stages the separate Linux x64 CEF runtime zip, strips staged ELF binaries, validates required files, and can write the generated release manifest. |
 | `scripts/prepare-linux-cef-sdk.mjs` | Downloads and extracts the pinned official CEF 139 Linux minimal SDK for CI builds that need `libcef_dll/` wrapper source. |
@@ -168,6 +178,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | Change CLI commands or terminal behavior | `local/crates/fennara-cli/src/` and `docs/cli.md` |
 | Change native update progress, shutdown confirmation, activation handshake, or recovery | `fennara-cpp/src/update/`, `fennara-cpp/src/ui/update_panel.cpp`, `fennara-cpp/src/ui/dock.cpp`, `local/crates/fennara-daemon/src/runtime_daemon/chat/mod.rs`, and `ui/chat/` |
 | Change native first-run setup or CLI bootstrap | `fennara-cpp/src/setup/`, `fennara-cpp/src/ui/setup_panel.cpp`, and `fennara-cpp/src/ui/dock.cpp` |
+| Change export-time addon exclusion | `fennara-cpp/src/ui/export_plugin.cpp`, `fennara-cpp/include/fennara/ui/export_plugin.hpp`, and `godot_demo/tests/export_plugin_test.gd` |
 | Change install/update operation logs, phases, error codes, or diagnostic reports | `local/crates/fennara-cli/src/operation.rs`, `local/crates/fennara-cli/src/operation/`, and `local/crates/fennara-cli/src/diagnostics.rs` |
 | Change webview prerequisite checks | `local/crates/fennara-cli/src/webview_prereq.rs`, `local/crates/fennara-cli/src/webview_runtime.rs`, and `fennara-cpp/src/ui/webview_host*` |
 | Change generated project guidance | `local/templates/` and `local/crates/fennara-cli/src/project_guidance.rs` |
@@ -183,6 +194,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | Change release packages, minimum CLI policy, or CLI self-update | `local/crates/fennara-cli/src/release_manifest.rs`, `local/crates/fennara-cli/src/release_client.rs`, `local/crates/fennara-cli/src/release_package.rs`, `local/crates/fennara-cli/src/self_update.rs`, `scripts/package-preview.mjs`, `scripts/release-policy.mjs`, `scripts/write-release-manifest.mjs`, and `.github/workflows/release.yml` |
 | Bump version | `node scripts/set-version.mjs <version>` |
 | Update setup/docs for chat vs MCP, providers, or slash commands | `README.md`, `docs/mcp-setup.md`, `docs/chat-vs-mcp.md`, `docs/providers.md`, `docs/slash-commands.md`, `docs/setup.md`, `docs/faq.md`, `docs/manual-install.md`, `docs/tools.md`, `docs/examples.md`, and `llms.txt` |
+| Update documentation translations | Canonical English page, `docs/i18n/languages.json`, the matching locale pages, `scripts/sync-doc-navigation.mjs`, and `scripts/check-doc-i18n.mjs` |
 
 ## Notes
 

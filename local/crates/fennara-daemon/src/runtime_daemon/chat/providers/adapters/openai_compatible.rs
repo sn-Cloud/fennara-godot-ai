@@ -15,7 +15,6 @@ use super::super::stream::{FinishReason, StreamEvent, Usage};
 use super::super::types::{AdapterKind, ChatCompletion, MalformedToolCall, ToolCallObservation};
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_PRE_STREAM_RETRIES: usize = 2;
 const PRE_STREAM_RETRY_DELAY: Duration = Duration::from_millis(500);
 
@@ -51,7 +50,7 @@ where
         .to_string();
     let client = Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(REQUEST_TIMEOUT)
+        .timeout(request.timeout)
         .build()
         .map_err(|error| LlmError::ProviderInit {
             provider: provider_id.clone(),
@@ -1305,6 +1304,15 @@ mod tests {
             tools: Vec::new(),
             cwd: None,
             approval_mode: "ask".to_string(),
+            timeout: Duration::from_secs(120),
         }
+    }
+
+    #[test]
+    fn request_body_includes_the_resolved_output_limit() {
+        let mut request = test_request("http://127.0.0.1:11434/v1".to_string());
+        request.model.request.generation.max_output_tokens = Some(8_192);
+
+        assert_eq!(body(&request).get("max_tokens"), Some(&json!(8_192)));
     }
 }

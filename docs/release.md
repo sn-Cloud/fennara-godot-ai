@@ -1,5 +1,9 @@
 # Release Process
 
+<!-- fennara-doc-nav:start -->
+**English** · [简体中文](i18n/zh-CN/release.md) · [Español](i18n/es/release.md) · [Português do Brasil](i18n/pt-BR/release.md) · [日本語](i18n/ja/release.md) · [한국어](i18n/ko/release.md) · [Русский](i18n/ru/release.md) · [Français](i18n/fr/release.md) · [Deutsch](i18n/de/release.md) · [Türkçe](i18n/tr/release.md)
+<!-- fennara-doc-nav:end -->
+
 Releases are manual. Do not publish from pull request workflows.
 
 > [!IMPORTANT]
@@ -293,11 +297,12 @@ disabled. Both workflows verify release metadata and downloaded asset bytes
 before completing publication or advancing a staging channel. Asset publication
 uses the job-scoped `GITHUB_TOKEN` with contents write access.
 
-The release policy currently requires CLI `0.3.12` for stable manifests and
+The release policy currently requires CLI `0.4.1` for stable manifests and
 CLI `0.3.8` for staging manifests. Stable discovery no longer resolves the
-retired `latest` tag. Stable `0.3.12` requires the corrected update validation,
-version-switch preflight, and Windows operation-journal handling. A staging
-candidate such as `0.3.12-pr.123.1` compares lower than stable `0.3.12` under
+retired `latest` tag. Stable `0.4.1` requires the corrected update validation,
+version-switch preflight, Windows operation-journal handling, and Linux CEF
+runtime marker repair. A staging candidate such as `0.4.1-pr.123.1` compares
+lower than stable `0.4.1` under
 SemVer, so its minimum must remain below the
 candidate version for first-run setup to install the candidate CLI. Do not
 change either minimum based only on manifest schema compatibility.
@@ -401,7 +406,11 @@ clearly.
 The CLI must publish Linux CEF runtime updates atomically: extract and validate
 in a staging directory, write the runtime marker only after required files are
 present, then publish the version directory and update `current.json` with a
-temp-file rename. Running editors keep using the runtime they already loaded.
+temp-file rename. The installed `fennara-cef-runtime.json` marker must identify
+the native loader contract with `"runtime": "cef"`. Install and update repair a
+matching legacy marker that only contains `"kind": "cef"` without downloading
+the CEF payload again. Running editors keep using the runtime they already
+loaded.
 
 The CLI embeds the generated project guidance templates from `local/templates/`.
 When release packaging builds the CLI, those templates are compiled into the binary with the rest of the CLI code.

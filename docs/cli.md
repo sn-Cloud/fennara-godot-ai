@@ -1,5 +1,9 @@
 # Fennara CLI
 
+<!-- fennara-doc-nav:start -->
+**English** · [简体中文](i18n/zh-CN/cli.md) · [Español](i18n/es/cli.md) · [Português do Brasil](i18n/pt-BR/cli.md) · [日本語](i18n/ja/cli.md) · [한국어](i18n/ko/cli.md) · [Русский](i18n/ru/cli.md) · [Français](i18n/fr/cli.md) · [Deutsch](i18n/de/cli.md) · [Türkçe](i18n/tr/cli.md)
+<!-- fennara-doc-nav:end -->
+
 Use the CLI when you prefer the terminal, need diagnostics or recovery, or want
 an automated install with an exact version.
 
@@ -66,6 +70,7 @@ Linux: ~/.local/share/fennara
 | `fennara doctor` | Inspect or repair the local installation |
 | `fennara diagnostics` | Show a sanitized operation report |
 | `fennara mcp-setup` | Connect an external MCP app |
+| `fennara prepare-export` | Remove Fennara's autoload before an addon-free CI export |
 | `fennara recover` | Restore an interrupted native update |
 | `fennara self-update` | Update only the installed CLI |
 
@@ -102,6 +107,27 @@ Installation has two safe paths:
   the current platform library, and installs that exact version's CLI-managed
   components. It keeps the project addon unchanged. An explicit `--version`
   must match the existing addon.
+
+For release installs, the CLI first resolves the request to one exact version,
+updates the installed Fennara CLI when that release provides a newer one, then
+continues the install with the replacement CLI. Local `--source` installs do
+not contact the release service or self-update.
+
+## Prepare An Addon-Free CI Export
+
+If `addons/fennara/` is excluded from a CI checkout, remove Fennara's persistent
+runtime autoload before Godot starts:
+
+```bash
+fennara prepare-export --project path/to/project
+godot --headless --path path/to/project --export-release "Preset"
+```
+
+The command edits only the `_fennara_game_capture` entry in `project.godot`.
+It preserves other autoloads and settings and is safe to rerun. This step must
+run before Godot because project startup validates autoload paths before editor
+or export plugins can execute. CI may instead install the Fennara addon before
+starting Godot.
 
 ## Update A Project
 

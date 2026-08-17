@@ -208,6 +208,7 @@ jobs:
             "res://tests/screenshot_session_viewport_test.gd",
             "res://tests/image_sheet_test.gd",
             "res://tests/runtime_image_context_test.gd",
+            "res://tests/get_node_properties_animation_tree_test.gd",
             "res://tests/ai_guidance_read_test.gd"
           )
           foreach ($testScript in $testScripts) {
@@ -230,6 +231,27 @@ jobs:
             if ($godot.ExitCode -ne 0) {
               exit $godot.ExitCode
             }
+          }
+
+          $exportTest = Start-Process `
+            -FilePath "${{ steps.godot.outputs.console }}" `
+            -ArgumentList @(
+              "--headless",
+              "--editor",
+              "--path",
+              '"${{ github.workspace }}\godot_demo"',
+              "--script",
+              "res://tests/export_plugin_test.gd"
+            ) `
+            -NoNewWindow `
+            -PassThru
+          if (-not $exportTest.WaitForExit($testTimeoutSeconds * 1000)) {
+            Write-Host "::error::Native export plugin test exceeded ${testTimeoutSeconds} seconds."
+            & taskkill.exe /PID $exportTest.Id /T /F
+            exit 124
+          }
+          if ($exportTest.ExitCode -ne 0) {
+            exit $exportTest.ExitCode
           }
 
       - name: Test Linux guidance containment

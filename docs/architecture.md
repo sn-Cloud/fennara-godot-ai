@@ -1,5 +1,9 @@
 # Architecture
 
+<!-- fennara-doc-nav:start -->
+**English** · [简体中文](i18n/zh-CN/architecture.md) · [Español](i18n/es/architecture.md) · [Português do Brasil](i18n/pt-BR/architecture.md) · [日本語](i18n/ja/architecture.md) · [한국어](i18n/ko/architecture.md) · [Русский](i18n/ru/architecture.md) · [Français](i18n/fr/architecture.md) · [Deutsch](i18n/de/architecture.md) · [Türkçe](i18n/tr/architecture.md)
+<!-- fennara-doc-nav:end -->
+
 Fennara is a local bridge between AI clients and an open Godot editor project.
 This page explains ownership, process boundaries, install layout, and update
 handoff behavior.
@@ -69,8 +73,8 @@ contract separates two browser surface styles:
 
 | Platform Path | Behavior |
 | --- | --- |
-| Windows | Native WebView2 child/overlay attached to the Godot editor window. |
-| macOS | Native WKWebView attached to the Godot editor window. |
+| Windows | Native WebView2 child/overlay attached to the Godot editor window, suppressed while overlapping Godot popups, embedded windows, canvas layers, or top-level controls are visible. |
+| macOS | Native WKWebView attached to the Godot editor window, using the same overlapping Godot UI suppression as Windows. |
 | Linux | CEF off-screen rendering into an internal Godot `TextureRect`, using a shared CEF runtime from Fennara app data. |
 
 Users can also set Chat Settings to open the built-in chat in their system
@@ -386,6 +390,20 @@ The daemon currently allows one managed `runtime_session` scene globally across
 all connected Godot editors. A start request runs in the selected or
 chat-bound Godot project, but another running managed scene must be stopped
 before starting a new one.
+
+## Export Boundary
+
+Fennara is active only in the editor. Its export plugin temporarily removes the
+`_fennara_game_capture` autoload before Godot serializes exported project
+settings, skips every file under `res://addons/fennara/` and `res://.fennara/`,
+and temporarily removes its entry from Godot's generated GDExtension registry.
+It restores the original autoload and registry when export ends. It does not
+rewrite or persist changes to `export_presets.cfg` or `project.godot`.
+
+This boundary starts after Godot opens the project. A CI checkout that omits
+`addons/fennara/` must run `fennara prepare-export` or install the addon before
+launching Godot. An export plugin cannot repair a missing autoload target
+before project startup validation.
 
 ## Release Assets
 

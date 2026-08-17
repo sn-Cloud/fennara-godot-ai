@@ -28,6 +28,10 @@ pub(crate) const DEFAULT_REASONING_EFFORT: &str = "medium";
 pub(crate) const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434";
 pub(crate) const DEFAULT_CHAT_SURFACE: &str = "embedded";
 pub(crate) const BROWSER_CHAT_SURFACE: &str = "browser";
+pub(crate) const DEFAULT_PROVIDER_TIMEOUT_SECONDS: u64 = 120;
+pub(crate) const MIN_PROVIDER_TIMEOUT_SECONDS: u64 = 30;
+pub(crate) const MAX_PROVIDER_TIMEOUT_SECONDS: u64 = 3_600;
+pub(crate) const DEFAULT_LOCAL_MAX_OUTPUT_TOKENS: u32 = 8_192;
 
 static SETTINGS_WRITE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
@@ -40,6 +44,10 @@ pub(crate) struct ChatSettings {
     pub(crate) ollama_base_url: String,
     #[serde(default)]
     pub(crate) provider_base_urls: BTreeMap<String, String>,
+    #[serde(default = "default_local_max_output_tokens")]
+    pub(crate) ollama_max_output_tokens: u32,
+    #[serde(default = "default_local_max_output_tokens")]
+    pub(crate) lmstudio_max_output_tokens: u32,
     pub(crate) model: String,
     #[serde(default = "default_reasoning_effort")]
     pub(crate) reasoning_effort: String,
@@ -49,6 +57,8 @@ pub(crate) struct ChatSettings {
     pub(crate) local_model_context_lengths: BTreeMap<String, u32>,
     #[serde(default = "default_chat_surface")]
     pub(crate) chat_surface: String,
+    #[serde(default = "default_provider_timeout_seconds")]
+    pub(crate) provider_timeout_seconds: u64,
     #[serde(default, deserialize_with = "deserialize_approval_mode")]
     pub(crate) approval_mode: ApprovalMode,
     #[serde(default = "default_true")]
@@ -62,12 +72,15 @@ pub(crate) struct PublicChatSettings {
     pub(crate) providers: Vec<PublicProvider>,
     pub(crate) ollama_base_url: String,
     pub(crate) provider_base_urls: BTreeMap<String, String>,
+    pub(crate) ollama_max_output_tokens: u32,
+    pub(crate) lmstudio_max_output_tokens: u32,
     pub(crate) model: String,
     pub(crate) default_model: &'static str,
     pub(crate) reasoning_effort: String,
     pub(crate) reasoning_effort_options: Vec<&'static str>,
     pub(crate) local_model_context_lengths: BTreeMap<String, u32>,
     pub(crate) chat_surface: String,
+    pub(crate) provider_timeout_seconds: u64,
     pub(crate) approval_mode: String,
     pub(crate) approval_mode_options: Vec<serde_json::Value>,
     pub(crate) telemetry_enabled: bool,
@@ -80,11 +93,14 @@ impl Default for ChatSettings {
             openrouter_api_key: None,
             ollama_base_url: DEFAULT_OLLAMA_BASE_URL.to_string(),
             provider_base_urls: default_provider_base_urls(),
+            ollama_max_output_tokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
+            lmstudio_max_output_tokens: DEFAULT_LOCAL_MAX_OUTPUT_TOKENS,
             model: DEFAULT_MODEL.to_string(),
             reasoning_effort: DEFAULT_REASONING_EFFORT.to_string(),
             custom_providers: Vec::new(),
             local_model_context_lengths: BTreeMap::new(),
             chat_surface: DEFAULT_CHAT_SURFACE.to_string(),
+            provider_timeout_seconds: DEFAULT_PROVIDER_TIMEOUT_SECONDS,
             approval_mode: ApprovalMode::Ask,
             telemetry_enabled: true,
         }
@@ -102,12 +118,17 @@ impl ChatSettings {
             providers,
             ollama_base_url: clean_ollama_base_url(&self.ollama_base_url),
             provider_base_urls: clean_provider_base_urls(&self.provider_base_urls),
+            ollama_max_output_tokens: clean_local_max_output_tokens(self.ollama_max_output_tokens),
+            lmstudio_max_output_tokens: clean_local_max_output_tokens(
+                self.lmstudio_max_output_tokens,
+            ),
             model: clean_model(&self.model).unwrap_or_else(|| DEFAULT_MODEL.to_string()),
             default_model: DEFAULT_MODEL,
             reasoning_effort: clean_reasoning_effort(&self.reasoning_effort).to_string(),
             reasoning_effort_options: vec!["low", DEFAULT_REASONING_EFFORT, "high"],
             local_model_context_lengths: self.local_model_context_lengths.clone(),
             chat_surface: clean_chat_surface(&self.chat_surface).to_string(),
+            provider_timeout_seconds: clean_provider_timeout_seconds(self.provider_timeout_seconds),
             approval_mode: self.approval_mode.as_str().to_string(),
             approval_mode_options: approval_mode_options(),
             telemetry_enabled: self.telemetry_enabled,
@@ -145,11 +166,14 @@ pub(crate) struct SaveSettingsRequest {
     pub(crate) provider_api_keys: Option<BTreeMap<String, String>>,
     pub(crate) ollama_base_url: Option<String>,
     pub(crate) provider_base_urls: Option<BTreeMap<String, String>>,
+    pub(crate) ollama_max_output_tokens: Option<u32>,
+    pub(crate) lmstudio_max_output_tokens: Option<u32>,
     pub(crate) custom_provider: Option<SaveCustomProviderRequest>,
     pub(crate) model: Option<String>,
     pub(crate) reasoning_effort: Option<String>,
     pub(crate) local_model_context_lengths: Option<BTreeMap<String, u32>>,
     pub(crate) chat_surface: Option<String>,
+    pub(crate) provider_timeout_seconds: Option<u64>,
     pub(crate) approval_mode: Option<String>,
     pub(crate) telemetry_enabled: Option<bool>,
 }
@@ -198,9 +222,15 @@ fn load_settings_unlocked() -> (ChatSettings, bool) {
         ProviderId::OLLAMA.to_string(),
         settings.ollama_base_url.clone(),
     );
+    settings.ollama_max_output_tokens =
+        clean_local_max_output_tokens(settings.ollama_max_output_tokens);
+    settings.lmstudio_max_output_tokens =
+        clean_local_max_output_tokens(settings.lmstudio_max_output_tokens);
     settings.local_model_context_lengths =
         clean_local_model_context_lengths(&settings.local_model_context_lengths);
     settings.chat_surface = clean_chat_surface(&settings.chat_surface).to_string();
+    settings.provider_timeout_seconds =
+        clean_provider_timeout_seconds(settings.provider_timeout_seconds);
     settings.approval_mode = clean_approval_mode(settings.approval_mode.as_str());
     if had_legacy_openrouter_key {
         auth::migrate_legacy_api_key(ProviderId::OPENROUTER, legacy_openrouter_key);
@@ -302,6 +332,12 @@ pub(crate) fn save_settings(update: SaveSettingsRequest) -> Result<ChatSettings,
                 .insert(provider.to_string(), clean_base_url(&clean));
         }
     }
+    if let Some(max_output_tokens) = update.ollama_max_output_tokens {
+        settings.ollama_max_output_tokens = clean_local_max_output_tokens(max_output_tokens);
+    }
+    if let Some(max_output_tokens) = update.lmstudio_max_output_tokens {
+        settings.lmstudio_max_output_tokens = clean_local_max_output_tokens(max_output_tokens);
+    }
     if let Some(custom_provider) = update.custom_provider {
         let update_existing = custom_provider.update_existing;
         if !update_existing && settings.custom_providers.len() >= custom::MAX_CUSTOM_PROVIDERS {
@@ -347,6 +383,10 @@ pub(crate) fn save_settings(update: SaveSettingsRequest) -> Result<ChatSettings,
     }
     if let Some(chat_surface) = update.chat_surface {
         settings.chat_surface = clean_chat_surface(&chat_surface).to_string();
+    }
+    if let Some(provider_timeout_seconds) = update.provider_timeout_seconds {
+        settings.provider_timeout_seconds =
+            clean_provider_timeout_seconds(provider_timeout_seconds);
     }
     if let Some(approval_mode) = update.approval_mode {
         settings.approval_mode = clean_approval_mode(&approval_mode);
@@ -589,6 +629,10 @@ pub(crate) fn clean_chat_surface(surface: &str) -> &'static str {
     }
 }
 
+pub(crate) fn clean_provider_timeout_seconds(seconds: u64) -> u64 {
+    seconds.clamp(MIN_PROVIDER_TIMEOUT_SECONDS, MAX_PROVIDER_TIMEOUT_SECONDS)
+}
+
 pub(crate) fn clean_ollama_base_url(base_url: &str) -> String {
     let clean = clean_base_url(base_url);
     if clean.is_empty() {
@@ -647,6 +691,18 @@ fn default_reasoning_effort() -> String {
 
 fn default_chat_surface() -> String {
     DEFAULT_CHAT_SURFACE.to_string()
+}
+
+fn default_provider_timeout_seconds() -> u64 {
+    DEFAULT_PROVIDER_TIMEOUT_SECONDS
+}
+
+fn default_local_max_output_tokens() -> u32 {
+    DEFAULT_LOCAL_MAX_OUTPUT_TOKENS
+}
+
+fn clean_local_max_output_tokens(value: u32) -> u32 {
+    value.max(1)
 }
 
 fn default_true() -> bool {

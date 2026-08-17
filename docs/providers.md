@@ -1,5 +1,9 @@
 # Built-In Chat Providers
 
+<!-- fennara-doc-nav:start -->
+**English** · [简体中文](i18n/zh-CN/providers.md) · [Español](i18n/es/providers.md) · [Português do Brasil](i18n/pt-BR/providers.md) · [日本語](i18n/ja/providers.md) · [한국어](i18n/ko/providers.md) · [Русский](i18n/ru/providers.md) · [Français](i18n/fr/providers.md) · [Deutsch](i18n/de/providers.md) · [Türkçe](i18n/tr/providers.md)
+<!-- fennara-doc-nav:end -->
+
 Connect a model provider to the Fennara chat dock inside Godot.
 
 > [!NOTE]
@@ -21,7 +25,6 @@ You can also type `/provider` and `/model` in the composer.
 
 | Provider | How To Connect | Model Id Shape | Notes |
 | --- | --- | --- | --- |
-| Codex account | Install the official Codex CLI, choose this provider, and complete the ChatGPT browser login. | `codex/default` | Uses `codex app-server`; supports ChatGPT subscription accounts and does not store OAuth tokens in Fennara. |
 | OpenAI | Create a key in [OpenAI API keys](https://platform.openai.com/api-keys). Fennara key/env: `OPENAI_API_KEY`. | `openai/<model>` | Uses OpenAI's official API. |
 | Anthropic | Create a key in [Claude Console API keys](https://console.anthropic.com/settings/keys). Fennara key/env: `ANTHROPIC_API_KEY`. | `anthropic/<model>` | Uses Anthropic's official Messages API. |
 | OpenRouter | Create a key in [OpenRouter Keys](https://openrouter.ai/settings/keys). Fennara key/env: `OPENROUTER_API_KEY`. | `openrouter/<provider>/<model>` | Uses OpenRouter's API. |
@@ -39,8 +42,7 @@ You can also type `/provider` and `/model` in the composer.
 | Ollama | Run a local Ollama server. No cloud API key is required. | `ollama/<local-model>` | Defaults to `http://127.0.0.1:11434`. |
 | LM Studio | Start LM Studio's local server. No key is required by default. | `lmstudio/<local-model>` | Defaults to `http://127.0.0.1:1234/v1`. If your LM Studio server requires auth, set `LMSTUDIO_API_KEY` in the daemon environment. |
 
-The Codex account provider needs the official Codex CLI and a ChatGPT account login.
-Cloud API providers need their own API key or subscription key. Local providers need
+Cloud providers need your own API key or subscription key. Local providers need
 the local server running with a model available.
 
 OpenRouter selections always use the explicit `openrouter/<provider>/<model>`
@@ -48,23 +50,6 @@ shape. Older saved `<provider>/<model>` OpenRouter selections are migrated once
 when settings load, but that legacy shape is not used for new routing.
 
 Fennara can store keys from the provider picker in the dock. Chat Settings includes an **Open providers** button for discovering the same picker. The key/env names above are the same names Fennara understands if you prefer environment variables. Stored keys live in the daemon's local app data, outside the Godot project.
-
-## Codex ChatGPT Account
-
-1. Install the official Codex CLI and confirm `codex --version` works.
-2. Open **Chat Settings > Chat > Open providers**.
-3. Choose **Codex (ChatGPT account)**.
-4. Complete the browser OAuth flow.
-5. Select `codex/default`.
-
-Fennara starts `codex app-server --stdio` locally. Codex owns the OAuth credentials,
-refresh tokens, model access, and subscription enforcement. Fennara receives only
-account status and streamed turn events. The default safety mode is Codex
-`workspaceWrite`; choosing Fennara **Full access** maps the Codex thread to
-`dangerFullAccess`.
-
-Configure Codex under **Chat Settings > MCP Apps** so the Codex agent can use the
-existing Fennara MCP tools for Godot-aware editor and runtime operations.
 
 ## Custom OpenAI-Compatible Providers
 
@@ -104,12 +89,22 @@ Fennara stores built-in chat settings locally through the daemon, outside the Go
 - custom provider header values
 - custom OpenAI-compatible provider definitions
 - local provider base URLs
+- separate Ollama and LM Studio maximum output-token values
 - selected model
 - reasoning effort
+- provider response timeout
 - chat display mode, either embedded in Godot or opened in the system browser
 - chat history
 
 These settings are not written into `res://addons/fennara/` and are not shared with Claude, Codex, Cursor, Gemini, or other external MCP apps.
+
+## Provider Response Timeout
+
+The **Provider response timeout** setting controls how long the built-in chat
+allows each model request to run. It defaults to 120 seconds and accepts values
+from 30 to 3600 seconds. Increasing it can help slower local models or long
+tool-heavy turns complete. The daemon applies the selected timeout to the
+provider request and cancels the request if that limit is reached.
 
 ## Chat Display Setting
 
@@ -144,11 +139,22 @@ ollama/llama3.1:8b
 Older `local/<model>` selections are still accepted as Ollama compatibility
 aliases. Prefer the explicit `ollama/<model>` form for new settings.
 
+Fennara sends Ollama's per-call maximum as the OpenAI-compatible `max_tokens`
+field, which Ollama maps to its native `num_predict` option.
+
 For LM Studio, start the local server from LM Studio and choose a model id shaped like:
 
 ```text
 lmstudio/<loaded-model-id>
 ```
+
+The Ollama and LM Studio provider setup forms use the same default and
+context-capping policy for separate provider-specific per-call maximum output
+settings. Each setting defaults to 8,192 tokens. When a local server reports the
+loaded context length, Fennara caps that provider's setting at half the context
+so requests retain input room. Fennara sends this effective limit as
+`max_tokens` and reserves the same value when deciding when to compact chat
+history.
 
 ## Model Catalog
 

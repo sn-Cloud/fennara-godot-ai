@@ -61,6 +61,8 @@ struct ClientRequest {
     provider_api_keys: Option<BTreeMap<String, String>>,
     ollama_base_url: Option<String>,
     provider_base_urls: Option<BTreeMap<String, String>>,
+    ollama_max_output_tokens: Option<u32>,
+    lmstudio_max_output_tokens: Option<u32>,
     custom_provider: Option<SaveCustomProviderRequest>,
     approval_mode: Option<String>,
     telemetry_enabled: Option<bool>,
@@ -70,6 +72,7 @@ struct ClientRequest {
     force: Option<bool>,
     refresh_local: Option<bool>,
     chat_surface: Option<String>,
+    provider_timeout_seconds: Option<u64>,
     mcp_target: Option<String>,
 }
 
@@ -483,11 +486,14 @@ where
                 provider_api_keys: request.provider_api_keys,
                 ollama_base_url: request.ollama_base_url,
                 provider_base_urls: request.provider_base_urls,
+                ollama_max_output_tokens: request.ollama_max_output_tokens,
+                lmstudio_max_output_tokens: request.lmstudio_max_output_tokens,
                 custom_provider: request.custom_provider,
                 model: request.model,
                 reasoning_effort: request.reasoning_effort,
                 local_model_context_lengths: request.local_model_context_lengths,
                 chat_surface: request.chat_surface,
+                provider_timeout_seconds: request.provider_timeout_seconds,
                 approval_mode: request.approval_mode,
                 telemetry_enabled: request.telemetry_enabled,
             };

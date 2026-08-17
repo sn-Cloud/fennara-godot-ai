@@ -11,6 +11,7 @@ pub(crate) struct LlmRequest {
     pub(crate) tools: Vec<Value>,
     pub(crate) cwd: Option<String>,
     pub(crate) approval_mode: String,
+    pub(crate) timeout: std::time::Duration,
 }
 
 impl LlmRequest {
@@ -33,6 +34,7 @@ impl LlmRequest {
             tools: request.tools.clone(),
             cwd: request.cwd.clone(),
             approval_mode: request.approval_mode.clone(),
+            timeout: settings.request_timeout,
         })
     }
 }
