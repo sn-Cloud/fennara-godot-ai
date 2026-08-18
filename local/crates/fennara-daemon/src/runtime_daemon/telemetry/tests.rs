@@ -247,28 +247,23 @@ fn test_config(endpoint: String, state_path: PathBuf) -> WorkerConfig {
 
 fn test_dir(name: &str) -> PathBuf {
     let sequence = TEST_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("..")
-        .join("temp")
-        .join("telemetry-tests");
+    let root = repo_temp_root().join("telemetry-tests");
     let dir = root.join(format!("{}-{name}-{sequence}", std::process::id()));
     cleanup(&dir);
     fs::create_dir_all(&dir).unwrap();
     dir
 }
 
+fn repo_temp_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("..")
+        .join("temp")
+}
+
 fn cleanup(path: &Path) {
-    if path.starts_with(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("temp"),
-    ) {
+    if path.starts_with(repo_temp_root()) {
         let _ = fs::remove_dir_all(path);
     }
 }
