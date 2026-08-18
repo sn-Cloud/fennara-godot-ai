@@ -19,8 +19,10 @@ const readmes = [
   "README.zh-CN.md",
 ].map((name) => readFileSync(new URL(`../../${name}`, import.meta.url), "utf8"));
 
-test("the chart workflow retains its stored series and publishes off main", () => {
-  assert.match(workflow, /schedule:/);
+test("the chart workflow is manual-only and retains its publish logic", () => {
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /\n\s*schedule:/);
+  assert.doesNotMatch(workflow, /\n\s*push:/);
   assert.match(workflow, /origin\/star-history:star-history\.json/);
   assert.match(workflow, /commit-tree/);
   assert.match(workflow, /refs\/heads\/star-history/);
