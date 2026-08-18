@@ -2,16 +2,6 @@ name: Star history chart
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/star-history-seed.json"
-      - ".github/workflows/star-history.yml"
-      - "scripts/generate-star-history.mjs"
-      - "scripts/star-history-*.mjs"
-  schedule:
-    - cron: "35 6 * * *"
 
 permissions:
   contents: write
