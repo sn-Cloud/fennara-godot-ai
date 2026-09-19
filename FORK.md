@@ -53,7 +53,7 @@ connectivity and damaged-bundle handling, then shuts down its own daemon.
 The fork supports two independent OpenAI connection methods:
 
 - `openai/<model>` uses an OpenAI API key and is billed through the API account.
-- `codex/default` uses the locally installed Codex CLI and its ChatGPT account.
+- `codex/<model>` uses the bundled or locally installed Codex CLI and its ChatGPT account.
 
 To use the ChatGPT account provider:
 
@@ -61,7 +61,18 @@ To use the ChatGPT account provider:
 2. Open **Chat Settings > Chat > Open providers**.
 3. Choose **Codex (ChatGPT account)**.
 4. Complete the browser OAuth flow.
-5. Select `codex/default`.
+5. Open the model picker and select a model returned by your Codex account.
+
+Models and their reasoning-effort options come from the official
+[Codex app-server `model/list` protocol](https://developers.openai.com/codex/app-server#list-models-modellist).
+Fennara follows all pages, excludes hidden models, and uses the returned names,
+supported efforts and defaults. Refresh the model picker to request the current
+catalog. Availability follows that Codex runtime and account; it need not match
+another ChatGPT or Codex client. Catalog failures are shown without substituting
+hardcoded models. A previously selected model that disappears must be reselected.
+The legacy `codex/default` selection resolves to the official default model.
+Before generation, Fennara checks the selected model and effort against the
+official catalog again. Models without reasoning options omit effort entirely.
 
 Fennara starts `codex app-server --stdio` locally. The Codex CLI owns OAuth
 credentials, refresh tokens, account status, model access, and subscription

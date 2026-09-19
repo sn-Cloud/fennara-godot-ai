@@ -6,7 +6,7 @@
     const effortStatus = elements.effortStatus || null;
     const effortToggle = elements.effortToggle || null;
     const effortOptions = elements.effortOptions || null;
-    const effortOptionButtons = Array.from(elements.effortOptionButtons || []);
+    let effortOptionButtons = [];
     const getCurrentReasoningEffort = callbacks.getCurrentReasoningEffort || (() => "medium");
     const setCurrentReasoningEffort = callbacks.setCurrentReasoningEffort || function () {};
     const cleanReasoningEffort = callbacks.cleanReasoningEffort || ((effort) => effort || "medium");
@@ -27,7 +27,7 @@
       setEffortMenuOpen(effortOptions?.hidden !== false);
     });
 
-    effortOptionButtons.forEach((button) => {
+    function bindOption(button) {
       button.addEventListener("click", (event) => {
         event.stopPropagation();
         const effort = cleanReasoningEffort(button.value);
@@ -37,7 +37,32 @@
         setEffortMenuOpen(false);
         saveCurrentChatSettings();
       });
-    });
+    }
+
+    // Rebuild from the selected model's catalog metadata, including future effort values.
+    // Missing metadata disables the control until a successful catalog response arrives.
+    function updateForModel(model) {
+      const efforts = Array.from(new Set(model?.supported_reasoning_efforts || []));
+      if (effortToggle) effortToggle.disabled = efforts.length === 0;
+      setEffortMenuOpen(false);
+      effortOptionButtons = efforts.map((effort) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.setAttribute("role", "option");
+        button.setAttribute("data-effort-option", "");
+        button.value = effort;
+        button.textContent = effortLabel(effort);
+        bindOption(button);
+        return button;
+      });
+      effortOptions?.replaceChildren(...effortOptionButtons);
+      if (efforts.length && !efforts.includes(getCurrentReasoningEffort())) {
+        const preferred = model.default_reasoning_effort;
+        setCurrentReasoningEffort(efforts.includes(preferred) ? preferred : efforts[0]);
+      }
+      syncReasoningControls();
+      updateComposerEffort();
+    }
 
     function syncReasoningControls(effort = getCurrentReasoningEffort()) {
       reasoningEffortControls.forEach((control) => {
@@ -52,7 +77,7 @@
     function updateComposerEffort() {
       const effort = getCurrentReasoningEffort();
       if (effortStatus) {
-        effortStatus.textContent = effortLabel(effort);
+        effortStatus.textContent = effortOptionButtons.length ? effortLabel(effort) : "Effort unavailable";
       }
       effortOptionButtons.forEach((button) => {
         const selected = button.value === effort;
@@ -72,6 +97,7 @@
       setEffortMenuOpen,
       syncReasoningControls,
       updateComposerEffort,
+      updateForModel,
     };
   }
 

@@ -23,7 +23,7 @@ pub(crate) fn model_definition(model_id: &str, display_name: Option<String>) -> 
     request.generation = GenerationDefaults {
         temperature: None,
         max_output_tokens: None,
-        reasoning_effort: Some("medium".to_string()),
+        reasoning_effort: None,
     };
 
     ModelDefinition {

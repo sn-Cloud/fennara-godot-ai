@@ -140,6 +140,21 @@
       list.replaceChildren();
       renderDetail(null);
 
+      // Keep discovery failures visible even when another provider has models.
+      if (catalogError) {
+        const error = document.createElement("div");
+        error.className = "model-empty";
+        const message = document.createElement("p");
+        message.textContent = catalogError;
+        const retry = document.createElement("button");
+        retry.type = "button";
+        retry.className = "secondary-button";
+        retry.textContent = "Retry model list";
+        retry.addEventListener("click", requestModels);
+        error.append(message, retry);
+        list.append(error);
+      }
+
       if (!provider && !rankedModels.length) {
         renderEmpty("Add a model provider before /model.", {
           label: "Open provider picker",

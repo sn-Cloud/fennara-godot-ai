@@ -1241,6 +1241,15 @@
   }
 
   function updateModelUi() {
+    // Resolve the legacy alias only after the official catalog supplies its default.
+    if (currentModel === "codex/default") {
+      const model = lastModelCatalog?.models?.find((item) => item.provider_id === "codex" && item.recommended);
+      if (model) {
+        currentModel = model.id;
+        if (model.default_reasoning_effort) currentReasoningEffort = model.default_reasoning_effort;
+      }
+    }
+    effortControls?.updateForModel(modelPicker?.modelInfo(currentModel));
     modelStatuses.forEach((status) => {
       status.textContent = currentModelLabel();
       status.title = currentModel || "No model selected";
@@ -1260,6 +1269,9 @@
     }
     if (currentProviderIsLocal()) {
       return localModelAvailable(currentModel);
+    }
+    if (currentProvider === "codex" && !modelPicker?.modelInfo(currentModel)) {
+      return false;
     }
     if (providerRequiresApiKey(currentProvider) || providerRequiresAccount(currentProvider)) {
       return providerConnected(currentProvider);
@@ -1288,6 +1300,10 @@
       return;
     }
     maybePromptForLocalContextLength(clean);
+    const selected = modelPicker?.modelInfo(clean);
+    if (clean !== currentModel && selected?.default_reasoning_effort) {
+      currentReasoningEffort = selected.default_reasoning_effort;
+    }
     currentProvider = providerFromModel(clean) || currentProvider;
     currentModel = clean;
     updateProviderUi();
@@ -1297,7 +1313,8 @@
   }
 
   function cleanReasoningEffort(effort) {
-    return ["low", "medium", "high"].includes(effort) ? effort : "medium";
+    const value = String(effort || "").trim();
+    return /^[a-z_]{1,32}$/.test(value) ? value : "medium";
   }
 
   function cleanChatSurface(surface) {

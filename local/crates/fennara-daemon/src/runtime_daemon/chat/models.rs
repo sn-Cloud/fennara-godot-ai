@@ -74,6 +74,7 @@ pub(crate) struct ModelInfo {
     pub(crate) supports_tools: bool,
     pub(crate) supports_reasoning: bool,
     pub(crate) supported_reasoning_efforts: Vec<String>,
+    pub(crate) default_reasoning_effort: Option<String>,
     pub(crate) description: Option<String>,
 }
 
@@ -156,8 +157,12 @@ pub(crate) async fn list_models(settings: &ChatSettings, refresh_local: bool) ->
         || has_minimax_cn_coding_plan_key
         || has_nvidia_key;
     let mut models = Vec::new();
+    let mut codex_error = None;
     if providers::codex_app_server::is_installed() {
-        models.push(codex_model_info());
+        match providers::codex_app_server::list_models().await {
+            Ok(entries) => models.extend(entries.iter().map(codex_model_info)),
+            Err(error) => codex_error = Some(format!("Codex model/list: {error}")),
+        }
     }
     if has_saved_openrouter_key {
         if let Ok(cached_catalog) = &cached_catalog {
@@ -393,17 +398,19 @@ pub(crate) async fn list_models(settings: &ChatSettings, refresh_local: bool) ->
         .values()
         .any(|status| matches!(status.state, "ready" | "empty"));
     let custom_live = !settings.custom_providers.is_empty();
-    let codex_live = providers::codex_app_server::is_installed();
+    let codex_live = models.iter().any(|m| m.provider_id == ProviderId::CODEX);
     let live = openrouter_error.is_none() || ollama_live || local_live || custom_live || codex_live;
     ModelCatalog {
         models,
         recommended_ids,
         live,
-        error: if needs_hosted_catalog {
-            openrouter_error
-        } else {
-            None
-        },
+        error: codex_error.or_else(|| {
+            if needs_hosted_catalog {
+                openrouter_error
+            } else {
+                None
+            }
+        }),
         catalog_status,
         ollama_status,
         local_provider_statuses,
@@ -447,18 +454,19 @@ fn catalog_status(
     }
 }
 
-fn codex_model_info() -> ModelInfo {
+// Preserve official model identifiers, labels, defaults and supported effort values.
+fn codex_model_info(model: &providers::codex_app_server::CodexModel) -> ModelInfo {
     ModelInfo {
-        id: "codex/default".to_string(),
-        display_name: "Codex account default".to_string(),
+        id: format!("codex/{}", model.model),
+        display_name: model.display_name.clone(),
         provider_id: ProviderId::CODEX.to_string(),
         provider: "Codex (ChatGPT account)".to_string(),
         source: "account",
-        recommended: true,
+        recommended: model.is_default,
         custom: false,
         verified: true,
-        latest_alias: true,
-        canonical_slug: Some("default".to_string()),
+        latest_alias: model.is_default,
+        canonical_slug: Some(model.model.clone()),
         context_length: None,
         max_output_tokens: None,
         input_cost_per_million: None,
@@ -468,15 +476,14 @@ fn codex_model_info() -> ModelInfo {
         tokens_per_second: None,
         modalities: vec!["in:text".to_string(), "out:text".to_string()],
         supports_tools: true,
-        supports_reasoning: true,
-        supported_reasoning_efforts: vec![
-            "low".to_string(),
-            "medium".to_string(),
-            "high".to_string(),
-        ],
-        description: Some(
-            "Uses the installed Codex CLI and its ChatGPT account authentication.".to_string(),
-        ),
+        supports_reasoning: !model.supported_reasoning_efforts.is_empty(),
+        supported_reasoning_efforts: model
+            .supported_reasoning_efforts
+            .iter()
+            .map(|v| v.reasoning_effort.clone())
+            .collect(),
+        default_reasoning_effort: Some(model.default_reasoning_effort.clone()),
+        description: Some(model.description.clone()),
     }
 }
 
@@ -538,6 +545,7 @@ fn append_custom_provider_models(
             modalities: vec!["in:text".to_string(), "out:text".to_string()],
             supports_tools: true,
             supports_reasoning: false,
+            default_reasoning_effort: None,
             supported_reasoning_efforts: Vec::new(),
             description: Some("Custom OpenAI-compatible provider model.".to_string()),
         });
@@ -585,6 +593,7 @@ fn openrouter_catalog_model_info(
         modalities,
         supports_tools: definition.capabilities.tools,
         supports_reasoning: definition.capabilities.reasoning,
+        default_reasoning_effort: None,
         supported_reasoning_efforts: if definition.capabilities.reasoning {
             vec!["low".to_string(), "medium".to_string(), "high".to_string()]
         } else {
@@ -694,6 +703,7 @@ fn ollama_model_info(id: &str, raw: Option<&Value>, verified: bool) -> ModelInfo
         modalities,
         supports_tools: capabilities.iter().any(|capability| capability == "tools"),
         supports_reasoning: false,
+        default_reasoning_effort: None,
         supported_reasoning_efforts: Vec::new(),
         description: raw.and_then(ollama_description),
     }
@@ -755,6 +765,7 @@ fn lmstudio_model_info(
         modalities: vec!["in:text".to_string(), "out:text".to_string()],
         supports_tools: true,
         supports_reasoning: false,
+        default_reasoning_effort: None,
         supported_reasoning_efforts: Vec::new(),
         description: raw
             .and_then(|model| model.get("description"))

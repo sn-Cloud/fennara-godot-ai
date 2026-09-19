@@ -16,6 +16,29 @@ fn provider_timeout_is_bounded() {
 use crate::runtime_daemon::chat::providers::custom::{CustomProviderConfig, CustomProviderModel};
 
 #[test]
+fn codex_settings_preserve_official_selections() {
+    assert_eq!(
+        migrate_legacy_openrouter_selection("codex/future-model", &[]),
+        "codex/future-model"
+    );
+    assert_eq!(
+        migrate_legacy_openrouter_selection("openrouter/codex/default", &[]),
+        "codex/default"
+    );
+    for effort in ["xhigh", "max", "ultra", "future_effort"] {
+        let settings = ChatSettings {
+            model: "codex/future-model".into(),
+            reasoning_effort: effort.into(),
+            ..ChatSettings::default()
+        };
+        let saved = serde_json::to_string(&settings).unwrap();
+        let restored: ChatSettings = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.public().reasoning_effort, effort);
+        assert_eq!(super::clean_reasoning_effort(effort), effort);
+    }
+}
+
+#[test]
 fn legacy_settings_default_to_anonymous_telemetry_enabled() {
     let settings: ChatSettings =
         serde_json::from_str(r#"{"model":"openrouter/google/gemini-3.5-flash"}"#).unwrap();

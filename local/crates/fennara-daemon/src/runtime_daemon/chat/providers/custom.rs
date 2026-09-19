@@ -22,6 +22,7 @@ const DEFAULT_CUSTOM_CONTEXT_TOKENS: u32 = 64_000;
 const DEFAULT_CUSTOM_MAX_OUTPUT_TOKENS: u32 = 4_096;
 
 const RESERVED_PROVIDER_IDS: &[&str] = &[
+    ProviderId::CODEX,
     ProviderId::OPENAI,
     ProviderId::ANTHROPIC,
     ProviderId::OPENROUTER,

@@ -125,7 +125,12 @@ impl ChatSettings {
             model: clean_model(&self.model).unwrap_or_else(|| DEFAULT_MODEL.to_string()),
             default_model: DEFAULT_MODEL,
             reasoning_effort: clean_reasoning_effort(&self.reasoning_effort).to_string(),
-            reasoning_effort_options: vec!["low", DEFAULT_REASONING_EFFORT, "high"],
+            // Codex options belong to the live per-model catalog, not global settings.
+            reasoning_effort_options: if self.model.starts_with("codex/") {
+                Vec::new()
+            } else {
+                vec!["low", DEFAULT_REASONING_EFFORT, "high"]
+            },
             local_model_context_lengths: self.local_model_context_lengths.clone(),
             chat_surface: clean_chat_surface(&self.chat_surface).to_string(),
             provider_timeout_seconds: clean_provider_timeout_seconds(self.provider_timeout_seconds),
@@ -534,6 +539,12 @@ fn migrate_legacy_openrouter_selection(
     custom_providers: &[CustomProviderConfig],
 ) -> String {
     let clean = model.trim();
+    // Repair the default alias persisted by the old provider-prefix migration.
+    let clean = if clean == "openrouter/codex/default" {
+        "codex/default"
+    } else {
+        clean
+    };
     let explicit_provider = clean.split_once('/').is_some_and(|(provider_id, _)| {
         custom::is_reserved_provider_id(provider_id)
             || custom_providers
@@ -613,12 +624,16 @@ fn strip_nitro_variant(model: &str) -> &str {
     }
 }
 
-pub(crate) fn clean_reasoning_effort(effort: &str) -> &'static str {
-    match effort.trim().to_ascii_lowercase().as_str() {
-        "low" => "low",
-        "medium" => DEFAULT_REASONING_EFFORT,
-        "high" => "high",
-        _ => DEFAULT_REASONING_EFFORT,
+// Keep protocol values losslessly; each provider validates support for the selected model.
+pub(crate) fn clean_reasoning_effort(effort: &str) -> &str {
+    let clean = effort.trim();
+    if !clean.is_empty()
+        && clean.len() <= 32
+        && clean.bytes().all(|b| b.is_ascii_lowercase() || b == b'_')
+    {
+        clean
+    } else {
+        DEFAULT_REASONING_EFFORT
     }
 }
 

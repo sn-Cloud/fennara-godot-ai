@@ -6,7 +6,7 @@ use std::{
     time::Duration,
 };
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines},
@@ -25,6 +25,36 @@ const INIT_TIMEOUT: Duration = Duration::from_secs(20);
 const RPC_TIMEOUT: Duration = Duration::from_secs(30);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const CODEX_COMMAND_ENV: &str = "FENNARA_CODEX_COMMAND";
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexModel {
+    pub(crate) model: String,
+    pub(crate) display_name: String,
+    pub(crate) description: String,
+    #[serde(default)]
+    pub(crate) hidden: bool,
+    pub(crate) is_default: bool,
+    pub(crate) default_reasoning_effort: String,
+    pub(crate) supported_reasoning_efforts: Vec<CodexEffort>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexEffort {
+    pub(crate) reasoning_effort: String,
+}
+
+// Discover picker-visible models from the official app-server on each refresh.
+// Always follow cursors, and never substitute a static list on failure.
+pub(crate) async fn list_models() -> Result<Vec<CodexModel>, String> {
+    let mut connection = CodexConnection::spawn()
+        .await
+        .map_err(|e| e.user_message())?;
+    let result = connection.list_models().await.map_err(|e| e.user_message());
+    connection.shutdown().await;
+    result
+}
 
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct CodexAccountStatus {
@@ -47,6 +77,44 @@ static ACCOUNT_STATUS: OnceLock<Mutex<CodexAccountStatus>> = OnceLock::new();
 
 fn account_status_cache() -> &'static Mutex<CodexAccountStatus> {
     ACCOUNT_STATUS.get_or_init(|| Mutex::new(CodexAccountStatus::default()))
+}
+
+// Report catalog/selection failures as actionable provider errors without
+// sending an unsupported model or effort to a generation request.
+fn codex_catalog_error(message: String) -> LlmError {
+    LlmError::ProviderInit {
+        provider: PROVIDER_NAME.to_string(),
+        message,
+    }
+}
+
+fn select_codex_model<'a>(models: &'a [CodexModel], id: &str) -> Result<&'a CodexModel, LlmError> {
+    models.iter().find(|m| if id == "default" || id.is_empty() { m.is_default } else { m.model == id })
+        .ok_or_else(|| codex_catalog_error("The selected Codex model is unavailable. Refresh the model list and choose a model.".into()))
+}
+
+fn select_codex_effort<'a>(
+    model: &'a CodexModel,
+    requested: Option<&'a str>,
+) -> Result<Option<&'a str>, LlmError> {
+    if model.supported_reasoning_efforts.is_empty() {
+        return Ok(None);
+    }
+    let effort = requested
+        .filter(|value| !value.is_empty())
+        .unwrap_or(&model.default_reasoning_effort);
+    if model
+        .supported_reasoning_efforts
+        .iter()
+        .any(|option| option.reasoning_effort == effort)
+    {
+        Ok(Some(effort))
+    } else {
+        Err(codex_catalog_error(format!(
+            "Codex model {} does not support effort {effort}. Refresh the model list and choose a supported effort.",
+            model.model
+        )))
+    }
 }
 
 pub(crate) fn cached_account_status() -> CodexAccountStatus {
@@ -241,10 +309,13 @@ where
         "serviceName".to_string(),
         Value::String("fennara_godot_ai".to_string()),
     );
-    let model_id = request.model.model.adapter_model_id.trim();
-    if !model_id.is_empty() && model_id != super::codex::DEFAULT_MODEL_ID {
-        thread_params.insert("model".to_string(), Value::String(model_id.to_string()));
-    }
+    // Resolve the legacy default alias and validate effort against the same
+    // official catalog used by the picker before starting a generation.
+    let models = connection.list_models().await?;
+    let selected = select_codex_model(&models, request.model.model.adapter_model_id.trim())?;
+    let effort = request.model.request.generation.reasoning_effort.as_deref();
+    let effort = select_codex_effort(selected, effort)?;
+    thread_params.insert("model".to_string(), Value::String(selected.model.clone()));
 
     let thread_result = connection
         .request("thread/start", Value::Object(thread_params), RPC_TIMEOUT)
@@ -263,7 +334,7 @@ where
     let turn_params = json!({
         "threadId": thread_id.clone(),
         "input": [{ "type": "text", "text": prompt }],
-        "effort": request.model.request.generation.reasoning_effort.clone(),
+        "effort": effort,
     });
     connection
         .request("turn/start", turn_params, RPC_TIMEOUT)
@@ -610,6 +681,42 @@ struct CodexConnection {
 }
 
 impl CodexConnection {
+    // List all visible pages on this initialized connection. Reject malformed
+    // data and repeated cursors rather than hanging or advertising guessed models.
+    async fn list_models(&mut self) -> Result<Vec<CodexModel>, LlmError> {
+        let mut models = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            let page = self
+                .request(
+                    "model/list",
+                    json!({"limit": 100, "cursor": cursor, "includeHidden": false}),
+                    RPC_TIMEOUT,
+                )
+                .await?;
+            let entries: Vec<CodexModel> = serde_json::from_value(
+                page.get("data").cloned().unwrap_or(Value::Null),
+            )
+            .map_err(|e| codex_catalog_error(format!("Invalid model/list response: {e}")))?;
+            models.extend(entries.into_iter().filter(|m| !m.hidden));
+            cursor = page
+                .get("nextCursor")
+                .and_then(Value::as_str)
+                .map(str::to_owned);
+            match &cursor {
+                None => break,
+                Some(value) if seen.insert(value.clone()) => {}
+                Some(_) => {
+                    return Err(codex_catalog_error(
+                        "model/list returned a repeated cursor".into(),
+                    ));
+                }
+            }
+        }
+        Ok(models)
+    }
+
     async fn spawn() -> Result<Self, LlmError> {
         let mut command = codex_app_server_command()?;
         command
@@ -878,6 +985,53 @@ fn is_executable_candidate(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn official_metadata_controls_model_and_effort_selection() {
+        let models: Vec<CodexModel> = serde_json::from_value(json!([{
+            "model": "future-model", "displayName": "Future model", "description": "test",
+            "isDefault": true, "defaultReasoningEffort": "ultra",
+            "supportedReasoningEfforts": [{"reasoningEffort": "ultra", "description": "test"}]
+        }]))
+        .unwrap();
+        let selected = select_codex_model(&models, "default").unwrap();
+        assert_eq!(selected.model, "future-model");
+        assert_eq!(select_codex_effort(selected, None).unwrap(), Some("ultra"));
+        assert_eq!(
+            select_codex_effort(selected, Some("ultra")).unwrap(),
+            Some("ultra")
+        );
+        assert!(select_codex_effort(selected, Some("medium")).is_err());
+        assert!(select_codex_model(&models, "removed-model").is_err());
+        assert!(select_codex_model(&[], "default").is_err());
+        let mut no_effort = selected.clone();
+        no_effort.supported_reasoning_efforts.clear();
+        assert_eq!(
+            select_codex_effort(&no_effort, Some("medium")).unwrap(),
+            None
+        );
+    }
+
+    // Opt-in read-only integration check against the actual bundled app-server.
+    #[tokio::test]
+    #[ignore = "requires installed Codex and model catalog access"]
+    async fn live_official_model_catalog() {
+        let models = list_models().await.unwrap();
+        assert!(!models.is_empty());
+        for model in &models {
+            assert!(!model.hidden);
+            select_codex_effort(model, None).unwrap();
+            println!(
+                "{}: {:?}",
+                model.model,
+                model
+                    .supported_reasoning_efforts
+                    .iter()
+                    .map(|v| &v.reasoning_effort)
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
 
     #[test]
     fn flattens_provider_messages_for_codex() {
