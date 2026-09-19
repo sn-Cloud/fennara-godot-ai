@@ -1097,7 +1097,8 @@ input,
   align-items: center;
   flex-wrap: nowrap;
   min-width: 0;
-  overflow: hidden;
+  /* The effort menu opens above this row; model labels truncate themselves. */
+  overflow: visible;
 }
 
 .composer-model-button {
