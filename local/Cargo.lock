@@ -269,7 +269,7 @@ checksum = "7360491ce676a36bf9bb3c56c1aa791658183a54d2744120f27285738d90465a"
 
 [[package]]
 name = "fennara-cli"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
  "getrandom 0.3.4",
@@ -287,10 +287,11 @@ dependencies = [
 
 [[package]]
 name = "fennara-daemon"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "axum",
  "base64",
+ "fennara-project-identity",
  "futures-util",
  "getrandom 0.3.4",
  "hmac",
@@ -303,18 +304,28 @@ dependencies = [
  "subtle",
  "sysinfo",
  "tokio",
+ "tokio-tungstenite",
 ]
 
 [[package]]
 name = "fennara-mcp"
-version = "0.4.2"
+version = "0.4.3"
 dependencies = [
  "base64",
+ "fennara-project-identity",
  "getrandom 0.3.4",
  "hmac",
  "serde",
  "serde_json",
  "sha2",
+]
+
+[[package]]
+name = "fennara-project-identity"
+version = "0.4.3"
+dependencies = [
+ "thiserror",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

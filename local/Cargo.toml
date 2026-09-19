@@ -3,11 +3,12 @@ members = [
     "crates/fennara-cli",
     "crates/fennara-daemon",
     "crates/fennara-mcp",
+    "crates/fennara-project-identity",
 ]
 resolver = "3"
 
 [workspace.package]
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/fennaraOfficial/fennara-godot-ai"
