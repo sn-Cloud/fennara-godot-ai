@@ -1,4 +1,5 @@
 mod app_layout;
+mod bundled_install;
 mod daemon_setup;
 mod diagnostics;
 mod doctor;
@@ -60,7 +61,7 @@ fn main() {
 
 fn run_tracked(args: Vec<String>) -> Result<(), String> {
     let kind = match args.first().map(String::as_str) {
-        Some("install") => Some(operation::OperationKind::Install),
+        Some("install" | "install-bundled") => Some(operation::OperationKind::Install),
         Some("update") => Some(operation::OperationKind::Update),
         Some("recover") => Some(operation::OperationKind::Update),
         Some(update_apply::COMPLETE_COMMAND | update_apply::ROLLBACK_COMMAND) => {
@@ -120,6 +121,9 @@ fn run(args: Vec<String>) -> Result<(), String> {
         Some("doctor") => doctor::run(args.iter().skip(1).map(String::as_str).collect()),
         Some("diagnostics") => diagnostics::run(args.iter().skip(1).map(String::as_str).collect()),
         Some("install") => project_install::run(args.iter().skip(1).map(String::as_str).collect()),
+        Some("install-bundled") => {
+            bundled_install::run(args.iter().skip(1).map(String::as_str).collect())
+        }
         Some("mcp-setup") => mcp_setup::run(args.iter().skip(1).map(String::as_str).collect()),
         Some("prepare-export") => {
             prepare_export::run(args.iter().skip(1).map(String::as_str).collect())

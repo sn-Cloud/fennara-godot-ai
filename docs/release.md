@@ -88,6 +88,11 @@ scons platform=windows target=editor
 
 ## 2. Run Package Preview
 
+This fork also provides an unpacked, complete Windows addon for local delivery.
+Its build and offline setup instructions are in [FORK.md](../FORK.md#windows-complete-addon).
+`scripts/package-windows-standalone-addon.mjs` produces that directory without
+running release workflows. The standard release/preview archives remain unchanged.
+
 Use this before publishing when packaging changed or when you want a dry run.
 
 GitHub:

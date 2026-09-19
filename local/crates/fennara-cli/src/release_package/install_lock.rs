@@ -10,11 +10,11 @@ const WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 const RETRY_DELAY: Duration = Duration::from_millis(50);
 const OWNER_WRITE_GRACE: Duration = Duration::from_secs(10);
 
-pub(super) struct InstallLock {
+pub(crate) struct InstallLock {
     path: PathBuf,
 }
 
-pub(super) fn acquire(layout: &AppLayout, version: &str) -> Result<InstallLock, String> {
+pub(crate) fn acquire(layout: &AppLayout, version: &str) -> Result<InstallLock, String> {
     let lock_dir = layout.versions_dir.join(".install-locks");
     fs::create_dir_all(&lock_dir).map_err(|error| {
         format!(

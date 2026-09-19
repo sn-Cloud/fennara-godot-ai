@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ko source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=ko source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # 설정
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Fennara를 설치하고 채팅할 위치를 선택한 뒤 Godot 프로젝트를 연결합니다.
+
+이 포크의 완전한 Windows 애드온은 폴더를 복사하고 **Set Up Fennara**를 클릭하면 되며 별도 CLI 설치가 필요 없습니다. [FORK.md](../../../FORK.md#windows-complete-addon)를 참고하세요.
 
 > [!TIP]
 > 대부분의 사용자는 애드온을 추가하고 Fennara 독을 연 다음 **Set Up Fennara**만 누르면 됩니다. macOS에서는 직접 내려받은 애드온 ZIP 뒤에 발생할 수 있는 보안 알림을 피하려면 아래의 CLI 설치를 사용하세요.

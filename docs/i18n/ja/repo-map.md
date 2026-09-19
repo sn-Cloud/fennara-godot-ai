@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ja source=docs/repo-map.md sha256=48c47152f755d34f1f6526d58c15c3d16205d5389a00442e4f1409efa514e73c -->
+<!-- fennara-i18n: locale=ja source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
 <a id="repo-map"></a>
 # リポジトリマップ
 
@@ -16,6 +16,7 @@
 | 変更 | 主な場所 |
 | --- | --- |
 | ユーザー向けセットアップまたは CLI の動作 | `local/crates/fennara-cli/` |
+| フォークの完全版 Windows アドオン | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
 | 外部 MCP プロトコルまたはスキーマ | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Project Root の検出または同一性判定 | `local/crates/fennara-project-identity/` |
 | 内蔵チャットまたはデーモンの動作 | `local/crates/fennara-daemon/` |

@@ -13,6 +13,7 @@ godot::String webview_dir();
 godot::String webview_profile_dir();
 godot::String webview_log_dir();
 godot::String cli_binary_path();
+godot::String bundled_runtime_dir();
 godot::String daemon_binary_path();
 godot::String daemon_control_token_path();
 godot::String current_manifest_path();

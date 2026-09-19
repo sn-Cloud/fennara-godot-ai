@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ko source=docs/release.md sha256=60b8cc51e0fcde9b4e18eadc230aaf1d8cc4fad2fe70cbf5190ab9123bac0073 -->
+<!-- fennara-i18n: locale=ko source=docs/release.md sha256=0f61b4882e5aab9b47de38284f70fc8a92f45df4a9791df91db3f4b229dc8e79 -->
 <a id="release-process"></a>
 # 릴리스 절차
 
@@ -95,6 +95,8 @@ scons platform=windows target=editor
 
 <a id="2-run-package-preview"></a>
 ## 2. Package Preview 실행
+
+이 포크는 로컬 배포용으로 압축하지 않은 완전한 Windows 애드온도 제공합니다. 빌드 및 오프라인 설정 안내는 [FORK.md](../../../FORK.md#windows-complete-addon)에 있습니다. `scripts/package-windows-standalone-addon.mjs`는 릴리스 워크플로를 실행하지 않고 해당 디렉터리를 생성합니다. 표준 릴리스 및 미리보기 압축 파일은 변경되지 않습니다.
 
 패키징이 변경되었거나 시험 실행이 필요할 때 게시 전에 사용하세요.
 

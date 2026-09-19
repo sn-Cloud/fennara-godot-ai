@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ko source=docs/repo-map.md sha256=48c47152f755d34f1f6526d58c15c3d16205d5389a00442e4f1409efa514e73c -->
+<!-- fennara-i18n: locale=ko source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
 <a id="repo-map"></a>
 # 저장소 지도
 
@@ -16,6 +16,7 @@
 | 변경 사항 | 기본 위치 |
 | --- | --- |
 | 사용자 설정 또는 CLI 동작 | `local/crates/fennara-cli/` |
+| 포크의 완전한 Windows 애드온 | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
 | 외부 MCP 프로토콜 또는 스키마 | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Project Root 검색 또는 동일성 판단 | `local/crates/fennara-project-identity/` |
 | 내장 채팅 또는 데몬 동작 | `local/crates/fennara-daemon/` |

@@ -11,6 +11,7 @@ This is the quick map for contributors and coding agents working in this reposit
 | Change | Primary Location |
 | --- | --- |
 | User setup or CLI behavior | `local/crates/fennara-cli/` |
+| Fork complete Windows addon | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
 | External MCP protocol or schemas | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Project Root discovery or equality | `local/crates/fennara-project-identity/` |
 | Built-in chat or daemon behavior | `local/crates/fennara-daemon/` |

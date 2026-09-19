@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=pt-BR source=docs/repo-map.md sha256=48c47152f755d34f1f6526d58c15c3d16205d5389a00442e4f1409efa514e73c -->
+<!-- fennara-i18n: locale=pt-BR source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
 <a id="repo-map"></a>
 # Mapa do repositório
 
@@ -16,6 +16,7 @@ Este é o mapa rápido para contribuidores e agentes de programação que trabal
 | Alteração | Local principal |
 | --- | --- |
 | Configuração do usuário ou comportamento da CLI | `local/crates/fennara-cli/` |
+| Addon Windows completo do fork | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
 | Protocolo MCP externo ou esquemas | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Descoberta ou igualdade da Raiz do projeto | `local/crates/fennara-project-identity/` |
 | Chat integrado ou comportamento do daemon | `local/crates/fennara-daemon/` |

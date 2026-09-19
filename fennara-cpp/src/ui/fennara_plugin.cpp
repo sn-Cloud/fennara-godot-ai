@@ -79,7 +79,8 @@ void FennaraPlugin::_enter_tree() {
     script_context_menu_plugin->set_local_bridge(local_bridge);
     add_context_menu_plugin(godot::EditorContextMenuPlugin::CONTEXT_SLOT_SCRIPT_EDITOR_CODE,
                             script_context_menu_plugin);
-    if (godot::FileAccess::file_exists(app_paths::daemon_binary_path())) {
+    if (app_paths::bundled_runtime_dir().is_empty() &&
+        godot::FileAccess::file_exists(app_paths::daemon_binary_path())) {
         update_check_cancelled.store(false, std::memory_order_release);
         update_check_thread =
             std::thread([this]() { update_notice::check_once(&update_check_cancelled); });

@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ja source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=ja source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # セットアップ
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Fennara をインストールし、会話を行う場所を選び、Godot プロジェクトを接続します。
+
+このフォークの完全版 Windows アドオンは、フォルダーをコピーして **Set Up Fennara** をクリックするだけで使用でき、CLI の別途インストールは不要です。[FORK.md](../../../FORK.md#windows-complete-addon) を参照してください。
 
 > [!TIP]
 > ほとんどのユーザーは、アドオンを追加し、Fennara ドックを開いて **Set Up Fennara** を押すだけです。macOS では、手動でダウンロードしたアドオン ZIP によって発生し得るセキュリティ通知を避けるため、以下の CLI インストールを使用してください。

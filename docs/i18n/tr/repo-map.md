@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=tr source=docs/repo-map.md sha256=48c47152f755d34f1f6526d58c15c3d16205d5389a00442e4f1409efa514e73c -->
+<!-- fennara-i18n: locale=tr source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
 <a id="repo-map"></a>
 # Depo Haritası
 
@@ -16,6 +16,7 @@ Bu, bu depoda çalışan katkıda bulunanlar ve kodlama aracıları için hızl�
 | Değişiklik | Birincil Konum |
 | --- | --- |
 | Kullanıcı kurulumu veya CLI davranışı | `local/crates/fennara-cli/` |
+| Fork için tam Windows eklentisi | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
 | Harici MCP protokolü veya şemaları | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Proje Kökü keşfi veya eşitliği | `local/crates/fennara-project-identity/` |
 | Yerleşik sohbet veya daemon davranışı | `local/crates/fennara-daemon/` |

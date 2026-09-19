@@ -4,6 +4,7 @@
 #include <godot_cpp/classes/file_access.hpp>
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/os.hpp>
+#include <godot_cpp/classes/project_settings.hpp>
 
 namespace fennara::app_paths {
 namespace {
@@ -119,6 +120,21 @@ godot::String webview_log_dir() {
     return dir.is_empty()
                ? godot::String()
                : dir.path_join("logs").path_join("webview");
+}
+
+// Resolve the complete Windows addon at setup time. Other platforms retain their
+// existing shared installation and never treat a foreign bundle as executable.
+godot::String bundled_runtime_dir() {
+    godot::OS *os = godot::OS::get_singleton();
+    godot::ProjectSettings *settings = godot::ProjectSettings::get_singleton();
+    if (os == nullptr || settings == nullptr || os->get_name() != "Windows") {
+        return "";
+    }
+    const godot::String dir = "res://addons/fennara/local/windows-x86_64";
+    // The directory also identifies an incomplete bundle: a missing manifest
+    // must fail offline setup instead of falling back to an official download.
+    return godot::DirAccess::dir_exists_absolute(settings->globalize_path(dir))
+               ? settings->globalize_path(dir) : godot::String();
 }
 
 godot::String cli_binary_path() {

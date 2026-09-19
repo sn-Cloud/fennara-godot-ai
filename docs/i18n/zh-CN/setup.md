@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=zh-CN source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=zh-CN source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # 设置
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 安装 Fennara，选择你想在哪里聊天，并连接你的 Godot 项目。
+
+本分支的完整 Windows 插件只需复制文件夹并点击 **Set Up Fennara**，无需单独安装 CLI，详见 [FORK.md](../../../FORK.md#windows-complete-addon)。
 
 > [!TIP]
 > 大多数用户只需要添加插件、打开 Fennara 停靠面板，然后按

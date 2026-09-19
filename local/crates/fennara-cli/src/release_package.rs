@@ -9,7 +9,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-mod install_lock;
+pub(crate) mod install_lock;
 
 pub struct InstalledPackage {
     pub version: String,
@@ -653,7 +653,7 @@ fn write_manifest(layout: &AppLayout, version: &str) -> Result<(), String> {
     write_current_manifest(&layout.current_manifest_path, format!("{raw}\n").as_bytes())
 }
 
-fn write_current_manifest(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_current_manifest(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let next = path.with_extension("json.next");
     let previous = path.with_extension("json.previous");
     let mut file = File::create(&next)

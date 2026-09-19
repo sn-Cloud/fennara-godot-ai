@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=tr source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=tr source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # Kurulum
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Fennara'yı kurun, nerede sohbet etmek istediğinizi seçin ve Godot projenizi bağlayın.
+
+Bu fork’un tam Windows eklentisi için (klasörü kopyalayıp **Set Up Fennara** düğmesine tıklayın; ayrı CLI kurulumu gerekmez) [FORK.md](../../../FORK.md#windows-complete-addon) belgesine bakın.
 
 > [!TIP]
 > Çoğu kullanıcının yalnızca eklentiyi eklemesi, Fennara dock'unu açması ve

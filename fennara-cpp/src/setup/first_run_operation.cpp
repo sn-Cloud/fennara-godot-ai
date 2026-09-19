@@ -69,12 +69,15 @@ bool FirstRunSetup::_launch_installer() {
                    godot::String::num_int64(os->get_process_id());
 
     godot::PackedStringArray args;
-    args.append("install");
+    const bool bundled = !app_paths::bundled_runtime_dir().is_empty();
+    args.append(bundled ? "install-bundled" : "install");
     args.append("--project");
     args.append(project_path);
-    args.append("--version");
-    args.append(addon_version);
-    if (addon_identity.is_staging()) {
+    if (!bundled) {
+        args.append("--version");
+        args.append(addon_version);
+    }
+    if (!bundled && addon_identity.is_staging()) {
         args.append("--channel");
         args.append(addon_identity.channel);
     }

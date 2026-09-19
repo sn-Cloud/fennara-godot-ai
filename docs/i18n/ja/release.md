@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ja source=docs/release.md sha256=60b8cc51e0fcde9b4e18eadc230aaf1d8cc4fad2fe70cbf5190ab9123bac0073 -->
+<!-- fennara-i18n: locale=ja source=docs/release.md sha256=0f61b4882e5aab9b47de38284f70fc8a92f45df4a9791df91db3f4b229dc8e79 -->
 <a id="release-process"></a>
 # リリース手順
 
@@ -87,6 +87,8 @@ scons platform=windows target=editor
 
 <a id="2-run-package-preview"></a>
 ## 2. Package Preview を実行する
+
+このフォークはローカル配布用に未圧縮の完全版 Windows アドオンも提供します。ビルドとオフライン設定の手順は [FORK.md](../../../FORK.md#windows-complete-addon) にあります。`scripts/package-windows-standalone-addon.mjs` はリリースワークフローを実行せずにディレクトリを生成します。標準のリリースおよびプレビュー用アーカイブは変更されません。
 
 パッケージ処理を変更した場合、またはドライランを行いたい場合は、公開前にこれを使用します。
 

@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=pt-BR source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=pt-BR source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # Configuração
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Instale o Fennara, escolha onde deseja conversar e conecte seu projeto Godot.
+
+Para o addon Windows completo deste fork (copie a pasta e clique em **Set Up Fennara**, sem instalar uma CLI separada), veja [FORK.md](../../../FORK.md#windows-complete-addon).
 
 > [!TIP]
 > A maioria dos usuários só precisa adicionar o addon, abrir o dock do Fennara e

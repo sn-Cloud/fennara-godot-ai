@@ -224,6 +224,19 @@ void FirstRunSetup::_continue_start() {
         return;
     }
 #endif
+    // Complete addons use their own offline installer. A damaged bundle reports
+    // an error instead of silently downloading a different upstream build.
+    const godot::String bundled = app_paths::bundled_runtime_dir();
+    if (!bundled.is_empty()) {
+        installer_cli_path = bundled.path_join("fennara.exe");
+        if (!godot::FileAccess::file_exists(installer_cli_path)) {
+            _fail("FEN-SETUP-BUNDLE-INCOMPLETE", "The addon package is incomplete. Copy the complete addons/fennara folder again.");
+            return;
+        }
+        step = Step::LaunchingInstaller;
+        _launch_installer();
+        return;
+    }
     if (!_prepare_download_paths()) {
         return;
     }

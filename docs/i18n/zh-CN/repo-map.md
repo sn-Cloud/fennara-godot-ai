@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=zh-CN source=docs/repo-map.md sha256=48c47152f755d34f1f6526d58c15c3d16205d5389a00442e4f1409efa514e73c -->
+<!-- fennara-i18n: locale=zh-CN source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
 <a id="repo-map"></a>
 # 仓库地图
 
@@ -16,6 +16,7 @@
 | 更改 | 主要位置 |
 | --- | --- |
 | 用户设置或 CLI 行为 | `local/crates/fennara-cli/` |
+| 分支的完整 Windows 插件 | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
 | 外部 MCP 协议或模式 | `local/crates/fennara-mcp/`、`local/schemas/tools/` |
 | 项目根目录发现或相等性 | `local/crates/fennara-project-identity/` |
 | 内置聊天或守护进程行为 | `local/crates/fennara-daemon/` |

@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=de source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=de source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # Einrichtung
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Installiere Fennara, wähle aus, wo du chatten möchtest, und verbinde dein Godot-Projekt.
+
+Für das vollständige Windows-Addon dieses Forks (Ordner kopieren und **Set Up Fennara** anklicken, ohne separate CLI-Installation) siehe [FORK.md](../../../FORK.md#windows-complete-addon).
 
 > [!TIP]
 > Die meisten Benutzer müssen nur das Addon hinzufügen, das Fennara-Dock öffnen und **Set Up Fennara** drücken. Verwende unter macOS die nachfolgende CLI-Installation, um die Sicherheitsmeldung zu vermeiden, die nach einem manuell heruntergeladenen Addon-ZIP auftreten kann.

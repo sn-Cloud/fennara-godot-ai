@@ -6,6 +6,9 @@
 
 Install Fennara, choose where you want to chat, and connect your Godot project.
 
+For this fork's complete Windows addon (copy the folder and click **Set Up
+Fennara**, with no separate CLI installation), see [FORK.md](../FORK.md#windows-complete-addon).
+
 > [!TIP]
 > Most users only need to add the addon, open the Fennara dock, and press
 > **Set Up Fennara**. On macOS, use the CLI installation below to avoid the

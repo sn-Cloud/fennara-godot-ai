@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=zh-CN source=docs/release.md sha256=60b8cc51e0fcde9b4e18eadc230aaf1d8cc4fad2fe70cbf5190ab9123bac0073 -->
+<!-- fennara-i18n: locale=zh-CN source=docs/release.md sha256=0f61b4882e5aab9b47de38284f70fc8a92f45df4a9791df91db3f4b229dc8e79 -->
 <a id="release-process"></a>
 # 发布流程
 
@@ -94,6 +94,8 @@ scons platform=windows target=editor
 
 <a id="2-run-package-preview"></a>
 ## 2. 运行 Package Preview
+
+本分支还提供用于本地分发的未压缩完整 Windows 插件。构建和离线设置说明见 [FORK.md](../../../FORK.md#windows-complete-addon)。`scripts/package-windows-standalone-addon.mjs` 生成该目录，不运行发布工作流。标准发布和预览压缩包保持不变。
 
 当打包发生更改，或你想进行试运行时，请在发布前使用它。
 

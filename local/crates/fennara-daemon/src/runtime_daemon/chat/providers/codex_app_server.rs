@@ -840,6 +840,20 @@ fn resolve_codex_command() -> Option<PathBuf> {
         }
     }
 
+    // Complete addons carry the native Codex distribution next to the daemon.
+    // Prefer it to PATH after an explicit user override, including its sandbox helpers.
+    if let Ok(executable) = env::current_exe() {
+        if let Some(parent) = executable.parent() {
+            let bundled = parent.join("codex").join("bin").join(if cfg!(windows) {
+                "codex.exe"
+            } else {
+                "codex"
+            });
+            if bundled.is_file() {
+                return Some(bundled);
+            }
+        }
+    }
     let path = env::var_os("PATH")?;
     let names: &[&str] = if cfg!(windows) {
         &["codex.exe", "codex.cmd", "codex.bat"]

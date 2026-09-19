@@ -28,6 +28,20 @@ bool installed_components_match_addon() {
     }
     const godot::PackedStringArray paths{app_paths::current_manifest_path()};
     const godot::Dictionary current = app_paths::read_json_first_existing(paths);
+    // A semantic version alone cannot distinguish a local fork from an official
+    // build. The bundled setup gate must match the exact packaged manifest.
+    const godot::String bundle = app_paths::bundled_runtime_dir();
+    if (!bundle.is_empty()) {
+        const godot::String id = godot::FileAccess::get_sha256(bundle.path_join("bundle.json"));
+        if (id.is_empty() || godot::String(current.get("bundle_id", "")) != id) {
+            return false;
+        }
+        for (const char *key : {"daemon_runtime", "mcp_runtime"}) {
+            if (!godot::FileAccess::file_exists(godot::String(current.get(key, "")))) {
+                return false;
+            }
+        }
+    }
     return godot::String(current.get("version", "")) == expected_version;
 }
 

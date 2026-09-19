@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=fr source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=fr source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # Installation
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Installez Fennara, choisissez où vous souhaitez discuter et connectez votre projet Godot.
+
+Pour l’addon Windows complet de ce fork (copiez le dossier et cliquez sur **Set Up Fennara**, sans installation séparée de la CLI), consultez [FORK.md](../../../FORK.md#windows-complete-addon).
 
 > [!TIP]
 > La plupart des utilisateurs doivent seulement ajouter l'addon, ouvrir le dock

@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ru source=docs/setup.md sha256=d470da8cda3e69aacb89ee5f06f1d7831df5ab7f50c94a599bfab5bfe22157e3 -->
+<!-- fennara-i18n: locale=ru source=docs/setup.md sha256=5ddf4d6cac5008ca71f231ad99c84befad2dda65e269cc1c5d538bccb5d1b381 -->
 <a id="setup"></a>
 # Настройка
 
@@ -9,6 +9,8 @@
 <!-- fennara-doc-nav:end -->
 
 Установите Fennara, выберите место общения и подключите свой проект Godot.
+
+Полный Windows-аддон этого форка требует только копирования папки и нажатия **Set Up Fennara**, без отдельной установки CLI. См. [FORK.md](../../../FORK.md#windows-complete-addon).
 
 > [!TIP]
 > Большинству пользователей достаточно добавить аддон, открыть панель Fennara

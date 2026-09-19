@@ -9,7 +9,46 @@ The separate [sn-Cloud/godot-ai-manager](https://github.com/sn-Cloud/godot-ai-ma
 project owns the earlier Godot MCP Native and Codex/Kimi dual-backend design.
 Those components are not part of this repository.
 
-## ChatGPT Account Provider
+## Windows Complete Addon
+
+Copy the packaged `addons/fennara` folder into a Godot 4.5+ project, open
+the Fennara dock, and click **Set Up Fennara**. Choose a provider or sign in
+to **Codex (ChatGPT account)**. Users do not install Rust, Node.js, or a
+separate Fennara/Codex CLI. Windows embedded chat uses Edge WebView2.
+
+The complete addon includes the Windows GDExtension, ripgrep, Fennara CLI,
+daemon/MCP launchers and runtimes, and the native Codex distribution with
+its sandbox helpers. First setup verifies the bundled hashes and prepares
+a build-specific runtime cache under `%LOCALAPPDATA%/Fennara`. Settings,
+chat history and logs remain in that user directory. No release download
+or self-update occurs during bundled setup. A running different build must
+have no connected editors before it can be replaced; close other editors
+and retry when prompted. The setup panel reports failures and offers Retry.
+
+Updates to complete addons are performed by closing Godot and replacing
+the complete `addons/fennara` folder. The official online updater is disabled
+for these packages so it cannot overwrite fork functionality.
+
+Maintainers build the Windows GDExtension with SCons and the Rust workspace
+with `cargo build --release --workspace --locked`, then package the folder:
+
+```powershell
+node scripts/package-windows-standalone-addon.mjs --codex-root <native-codex-vendor-directory> --ripgrep <path-to-rg.exe>
+```
+
+The Codex directory must contain `bin/codex.exe` and `codex-resources/`
+(including the command runner and Windows sandbox setup helper). The full
+vendor directory and its metadata are preserved. The script outputs
+`dist/fennara-addon-windows-x86_64-standalone-v<version>/addons/fennara`.
+It does not publish a release or change upstream release workflows.
+
+Validate a built package with `node scripts/test-standalone-addon.mjs
+<godot.exe> <complete-addon-directory>` using the main Godot executable (not
+the Windows console wrapper). The test requires the daemon port to be free,
+uses a fresh user-data directory under repository `temp/`, checks real editor
+connectivity and damaged-bundle handling, then shuts down its own daemon.
+
+## ChatGPT Account Provider Setup
 
 The fork supports two independent OpenAI connection methods:
 
@@ -18,7 +57,7 @@ The fork supports two independent OpenAI connection methods:
 
 To use the ChatGPT account provider:
 
-1. Install the official Codex CLI and confirm `codex --version` works.
+1. Use the complete Windows addon, or install the official Codex CLI when using a lightweight addon.
 2. Open **Chat Settings > Chat > Open providers**.
 3. Choose **Codex (ChatGPT account)**.
 4. Complete the browser OAuth flow.
@@ -41,6 +80,5 @@ The fork follows upstream releases while retaining the Codex account provider.
 When merging upstream changes, keep the provider implementation, account UI,
 settings migration, and `codex/default` model routing together.
 
-The canonical upstream documentation and its translations remain unchanged so
-the upstream documentation consistency gate can run without fork-specific
-translation drift. Fork-only behavior is documented in this file.
+Fork-only behavior is documented in this file; setup, release, and repository
+map pages link here for the complete Windows addon workflow.

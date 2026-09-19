@@ -1,4 +1,5 @@
 #include "fennara/ui/setup_panel.hpp"
+#include "fennara/app_paths.hpp"
 
 #include "fennara/setup/first_run_setup.hpp"
 
@@ -96,7 +97,9 @@ void FirstRunSetupPanel::_build_ui() {
     content->add_child(status_label);
 
     detail_label =
-        make_wrapped_label("The matching CLI, daemon, MCP server, and runtime will be installed in "
+        make_wrapped_label(!app_paths::bundled_runtime_dir().is_empty()
+                           ? "Click Set Up Fennara to prepare the included components. No separate installation is needed."
+                           : "The matching CLI, daemon, MCP server, and runtime will be installed in "
                            "Fennara app data. Your project addon will not be replaced.");
     detail_label->add_theme_color_override("font_color", godot::Color("#a8b0ba"));
     content->add_child(detail_label);
