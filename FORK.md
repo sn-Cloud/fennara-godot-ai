@@ -118,8 +118,9 @@ Fennara starts `codex app-server --stdio` locally. The Codex CLI owns OAuth
 credentials, refresh tokens, account status, model access, and subscription
 enforcement. Fennara does not read or store ChatGPT tokens.
 
-The default Fennara permission mode maps to Codex `workspaceWrite`. Choosing
-Fennara **Full access** maps the Codex thread to `dangerFullAccess`.
+The default Fennara permission mode maps to Codex `thread/start` sandbox mode
+`workspace-write`. Choosing Fennara **Full access** maps it to `danger-full-access`.
+These request enum values differ from the camel-case sandbox policy types in responses.
 
 Codex sessions can use the existing Fennara MCP tools for Godot editor and
 runtime operations. This does not install or replace Fennara MCP with Godot MCP

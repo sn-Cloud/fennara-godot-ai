@@ -296,14 +296,7 @@ where
     );
     thread_params.insert(
         "sandbox".to_string(),
-        Value::String(
-            if request.approval_mode == "full_access" {
-                "dangerFullAccess"
-            } else {
-                "workspaceWrite"
-            }
-            .to_string(),
-        ),
+        Value::String(thread_sandbox_mode(&request.approval_mode).to_string()),
     );
     thread_params.insert("ephemeral".to_string(), Value::Bool(true));
     thread_params.insert(
@@ -980,6 +973,17 @@ fn resolve_codex_command() -> Option<PathBuf> {
     None
 }
 
+// thread/start takes the kebab-case SandboxMode enum, not the camel-case
+// SandboxPolicy discriminator returned in responses. Only explicit full access
+// should disable the workspace sandbox.
+fn thread_sandbox_mode(approval_mode: &str) -> &'static str {
+    if approval_mode == "full_access" {
+        "danger-full-access"
+    } else {
+        "workspace-write"
+    }
+}
+
 fn is_executable_candidate(path: &Path) -> bool {
     path.is_file()
 }
@@ -1033,6 +1037,50 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    // Exercise the real protocol parser without starting a turn or running tools.
+    #[tokio::test]
+    #[ignore = "requires installed Codex and model catalog access"]
+    async fn live_official_thread_sandbox_modes() {
+        let mut connection = CodexConnection::spawn().await.unwrap();
+        let models = connection.list_models().await.unwrap();
+        let model = models
+            .iter()
+            .find(|model| model.model.contains("astra"))
+            .unwrap_or_else(|| select_codex_model(&models, "default").unwrap());
+        for mode in ["default", "full_access"] {
+            let result = connection
+                .request(
+                    "thread/start",
+                    json!({
+                        "model": model.model,
+                        "approvalPolicy": "never",
+                        "sandbox": thread_sandbox_mode(mode),
+                        "ephemeral": true,
+                        "serviceName": "fennara_godot_ai"
+                    }),
+                    RPC_TIMEOUT,
+                )
+                .await
+                .unwrap();
+            assert!(
+                result
+                    .pointer("/thread/id")
+                    .and_then(Value::as_str)
+                    .is_some()
+            );
+            assert_eq!(
+                result.pointer("/sandbox/type").and_then(Value::as_str),
+                Some(if mode == "full_access" {
+                    "dangerFullAccess"
+                } else {
+                    "workspaceWrite"
+                })
+            );
+            println!("{}: {} accepted", model.model, thread_sandbox_mode(mode));
+        }
+        connection.shutdown().await;
     }
 
     #[test]
