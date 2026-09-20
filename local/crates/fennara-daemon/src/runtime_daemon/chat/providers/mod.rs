@@ -520,8 +520,10 @@ where
                 }
             })
             .await?;
+            // Codex emits events instead of returning a completion. Preserve the
+            // accumulated reply for persistence and the final chat refresh.
             ChatCompletion {
-                content: String::new(),
+                content: accumulator.lock().await.text.clone(),
                 tool_calls: Vec::new(),
                 finish_reason: FinishReason::Stop,
                 tool_call_observation: ToolCallObservation::none(),
@@ -975,6 +977,48 @@ pub(crate) fn parse_model_ref(model: &str) -> Result<String, LlmError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Run the full provider boundary so streamed text cannot be discarded by
+    // the final completion that the generation runner persists and republishes.
+    #[tokio::test]
+    #[ignore = "requires Codex login and sends one short model request"]
+    async fn live_codex_completion_preserves_streamed_text() {
+        let settings = settings_from_chat(&ChatSettings::default());
+        let request = ChatRequest {
+            model: "codex/gpt-6-astra".to_string(),
+            reasoning_effort: "low".to_string(),
+            messages: vec![
+                json!({"role": "user", "content": "Reply with exactly: Fennara streaming check passed. Do not use tools."}),
+            ],
+            tools: Vec::new(),
+            max_output_tokens: None,
+            cwd: None,
+            approval_mode: "ask".to_string(),
+        };
+        let text = Arc::new(Mutex::new(String::new()));
+        let completion = stream_chat(&settings, &request, None, {
+            let text = Arc::clone(&text);
+            move |item| {
+                let text = Arc::clone(&text);
+                async move {
+                    if let StreamItem::Text { content, .. } = item {
+                        *text.lock().await = content;
+                    }
+                    Ok(true)
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let streamed = text.lock().await;
+        assert!(!streamed.trim().is_empty(), "model must emit text");
+        assert_eq!(
+            completion.content, *streamed,
+            "persisted reply must match streamed reply"
+        );
+        assert_eq!(completion.finish_reason, FinishReason::Stop);
+        println!("Streamed and final reply match: {}", completion.content);
+    }
 
     fn custom_provider_config() -> custom::CustomProviderConfig {
         custom::CustomProviderConfig {

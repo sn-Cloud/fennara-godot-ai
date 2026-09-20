@@ -117,6 +117,8 @@ official catalog again. Models without reasoning options omit effort entirely.
 Fennara starts `codex app-server --stdio` locally. The Codex CLI owns OAuth
 credentials, refresh tokens, account status, model access, and subscription
 enforcement. Fennara does not read or store ChatGPT tokens.
+Codex streamed reply text is retained in the final completion used to save and
+refresh chat history.
 
 The default Fennara permission mode maps to Codex `thread/start` sandbox mode
 `workspace-write`. Choosing Fennara **Full access** maps it to `danger-full-access`.
