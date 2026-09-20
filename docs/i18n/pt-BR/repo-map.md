@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=pt-BR source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=pt-BR source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # Mapa do repositório
 
@@ -17,6 +17,7 @@ Este é o mapa rápido para contribuidores e agentes de programação que trabal
 | --- | --- |
 | Configuração do usuário ou comportamento da CLI | `local/crates/fennara-cli/` |
 | Addon Windows completo do fork | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| Atualizações do fork | Na CLI, `src/codex_update.rs` gerencia o runtime oficial privado do Codex; `src/fork_update.rs` prepara as versões completas do fork. No daemon, `chat/providers/codex_runtime.rs` agenda verificações e seleciona runtimes gerenciados. Veja `FORK.md`. |
 | Protocolo MCP externo ou esquemas | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Descoberta ou igualdade da Raiz do projeto | `local/crates/fennara-project-identity/` |
 | Chat integrado ou comportamento do daemon | `local/crates/fennara-daemon/` |

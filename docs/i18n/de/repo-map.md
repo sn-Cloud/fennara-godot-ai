@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=de source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=de source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # Repositorysübersicht
 
@@ -17,6 +17,7 @@ Dies ist die Kurzübersicht für Mitwirkende und Coding-Agenten, die in diesem R
 | --- | --- |
 | Einrichtung für Benutzer oder CLI-Verhalten | `local/crates/fennara-cli/` |
 | Vollständiges Windows-Addon des Forks | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| Fork-spezifische Updates | In der CLI verwaltet `src/codex_update.rs` die separate offizielle Codex-Laufzeit; `src/fork_update.rs` bereitet vollständige Fork-Releases vor. Im Daemon plant `chat/providers/codex_runtime.rs` Prüfungen und wählt verwaltete Laufzeiten aus. Siehe `FORK.md`. |
 | Externes MCP-Protokoll oder Schemas | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Ermittlung oder Gleichheit von Projektstämmen | `local/crates/fennara-project-identity/` |
 | Integrierter Chat oder Daemon-Verhalten | `local/crates/fennara-daemon/` |

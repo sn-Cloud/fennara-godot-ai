@@ -1,9 +1,11 @@
 mod app_layout;
 mod bundled_install;
+mod codex_update;
 mod daemon_setup;
 mod diagnostics;
 mod doctor;
 mod existing_addon_install;
+mod fork_update;
 mod mcp_setup;
 mod operation;
 mod prepare_export;
@@ -129,6 +131,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
             prepare_export::run(args.iter().skip(1).map(String::as_str).collect())
         }
         Some("update") => release_update::run(args.iter().skip(1).map(String::as_str).collect()),
+        Some("codex-update") => codex_update::run(),
         Some("recover") => update_apply::recover(args.iter().skip(1).map(String::as_str).collect()),
         Some(update_apply::COMPLETE_COMMAND) => {
             update_apply::complete(args.iter().skip(1).map(String::as_str).collect())

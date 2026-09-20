@@ -48,6 +48,7 @@ pub(crate) struct CodexEffort {
 // Discover picker-visible models from the official app-server on each refresh.
 // Always follow cursors, and never substitute a static list on failure.
 pub(crate) async fn list_models() -> Result<Vec<CodexModel>, String> {
+    super::codex_runtime::check_in_background();
     let mut connection = CodexConnection::spawn()
         .await
         .map_err(|e| e.user_message())?;
@@ -957,7 +958,8 @@ fn resolve_codex_command() -> Option<PathBuf> {
                 "codex"
             });
             if bundled.is_file() {
-                return Some(bundled);
+                return super::codex_runtime::managed_command(&parent.join("codex"))
+                    .or(Some(bundled));
             }
         }
     }

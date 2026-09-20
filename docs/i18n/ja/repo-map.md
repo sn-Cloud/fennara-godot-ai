@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ja source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=ja source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # リポジトリマップ
 
@@ -17,6 +17,7 @@
 | --- | --- |
 | ユーザー向けセットアップまたは CLI の動作 | `local/crates/fennara-cli/` |
 | フォークの完全版 Windows アドオン | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| フォーク専用の更新 | CLI の `src/codex_update.rs` は専用の公式 Codex ランタイムを管理し、`src/fork_update.rs` はフォークの完全なリリースを準備します。デーモンの `chat/providers/codex_runtime.rs` は確認をスケジュールし、管理対象ランタイムを選択します。`FORK.md` を参照してください。 |
 | 外部 MCP プロトコルまたはスキーマ | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Project Root の検出または同一性判定 | `local/crates/fennara-project-identity/` |
 | 内蔵チャットまたはデーモンの動作 | `local/crates/fennara-daemon/` |

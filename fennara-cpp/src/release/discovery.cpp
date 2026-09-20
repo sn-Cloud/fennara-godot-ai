@@ -241,8 +241,9 @@ Result stable_result(const release_identity::Identity &current, int timeout_ms,
                      const std::atomic_bool *cancelled) {
     Result result;
     result.current = current;
+    const bool bundled = !app_paths::bundled_runtime_dir().is_empty();
     const HttpResponse response =
-        request_github(kLatestReleasePath, "application/vnd.github+json", timeout_ms, "",
+        request_github(bundled ? "/repos/sn-Cloud/fennara-godot-ai/releases/latest" : kLatestReleasePath, "application/vnd.github+json", timeout_ms, "",
                        cancelled);
     result.cancelled = response.cancelled;
     if (!response.error.is_empty() || response.code != 200) {
@@ -258,6 +259,24 @@ Result stable_result(const release_identity::Identity &current, int timeout_ms,
     if (result.target_version.is_empty()) {
         result.error = "Stable release metadata did not contain a version.";
         return result;
+    }
+    // A fork release is installable only when it carries the complete addon and
+    // a GitHub-computed digest. Never offer a source-only/upstream release here.
+    if (bundled) {
+        const godot::Dictionary metadata = parsed;
+        const godot::String expected = "fennara-addon-windows-x86_64-standalone-v" + result.target_version + ".zip";
+        const godot::Array assets = metadata.get("assets", godot::Array());
+        bool found = false;
+        for (int index = 0; index < assets.size(); index++) {
+            if (assets[index].get_type() != godot::Variant::DICTIONARY) continue;
+            const godot::Dictionary asset = assets[index];
+            const godot::String digest = asset.get("digest", "");
+            if (godot::String(asset.get("name", "")) == expected && digest.begins_with("sha256:") && digest.length() == 71) found = true;
+        }
+        if (!found) {
+            result.error = "No verified complete addon has been published on the fork update channel.";
+            return result;
+        }
     }
     result.target_release_tag = "v" + result.target_version;
     result.update_available =
@@ -365,7 +384,7 @@ Result check(int timeout_ms, const std::atomic_bool *cancelled) {
         result.error = identity_error;
         return result;
     }
-    return identity->is_staging() ? staging_result(*identity, timeout_ms, cancelled)
+    return identity->is_staging() && app_paths::bundled_runtime_dir().is_empty() ? staging_result(*identity, timeout_ms, cancelled)
                                   : stable_result(*identity, timeout_ms, cancelled);
 }
 

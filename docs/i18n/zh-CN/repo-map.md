@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=zh-CN source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=zh-CN source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # 仓库地图
 
@@ -17,6 +17,7 @@
 | --- | --- |
 | 用户设置或 CLI 行为 | `local/crates/fennara-cli/` |
 | 分支的完整 Windows 插件 | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| 分支专用更新 | CLI 的 `src/codex_update.rs` 管理独立的官方 Codex 运行时；`src/fork_update.rs` 暂存分支完整发行包。守护进程的 `chat/providers/codex_runtime.rs` 安排检查并选择托管运行时。详见 `FORK.md`。 |
 | 外部 MCP 协议或模式 | `local/crates/fennara-mcp/`、`local/schemas/tools/` |
 | 项目根目录发现或相等性 | `local/crates/fennara-project-identity/` |
 | 内置聊天或守护进程行为 | `local/crates/fennara-daemon/` |

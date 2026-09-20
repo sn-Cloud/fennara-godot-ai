@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=tr source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=tr source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # Depo Haritası
 
@@ -17,6 +17,7 @@ Bu, bu depoda çalışan katkıda bulunanlar ve kodlama aracıları için hızl�
 | --- | --- |
 | Kullanıcı kurulumu veya CLI davranışı | `local/crates/fennara-cli/` |
 | Fork için tam Windows eklentisi | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| Fork güncellemeleri | CLI içinde `src/codex_update.rs` özel resmi Codex çalışma zamanını yönetir; `src/fork_update.rs` fork’un tam sürümlerini hazırlar. Daemon içindeki `chat/providers/codex_runtime.rs` kontrolleri planlar ve yönetilen çalışma zamanlarını seçer. Bkz. `FORK.md`. |
 | Harici MCP protokolü veya şemaları | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Proje Kökü keşfi veya eşitliği | `local/crates/fennara-project-identity/` |
 | Yerleşik sohbet veya daemon davranışı | `local/crates/fennara-daemon/` |

@@ -133,6 +133,12 @@ pub(super) fn activate_runtime_and_guidance(
     project_dir: &Path,
     version: &str,
 ) -> Result<(), String> {
+    if project_dir
+        .join("addons/fennara/local/windows-x86_64/bundle.json")
+        .is_file()
+    {
+        return crate::fork_update::activate(project_dir);
+    }
     release_package::activate_package(version)?;
     project_guidance::write(project_dir)
 }

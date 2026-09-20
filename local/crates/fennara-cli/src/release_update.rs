@@ -41,6 +41,20 @@ pub fn run(args: Vec<&str>) -> Result<(), String> {
             )
         })?;
     let project_version = existing.version.clone();
+    // Complete fork addons have an independent release source and installer.
+    // The upstream code path below remains unchanged for every other install.
+    if project_dir
+        .join("addons/fennara/local/windows-x86_64/bundle.json")
+        .is_file()
+    {
+        return crate::fork_update::prepare(
+            &project_dir,
+            &project_version,
+            &options.version,
+            options.prepare,
+            observed_godot_process(options.godot_pid, options.godot_executable.as_deref())?,
+        );
+    }
     let identity = ReleaseIdentity::load(
         &project_install::project_addon_dir(&project_dir),
         &existing.version,

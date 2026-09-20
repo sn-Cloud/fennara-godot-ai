@@ -77,5 +77,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     const result = spawnSync(process.execPath, [path.join(root, "scripts", script)], { cwd: root, stdio: "inherit" });
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
-  console.log(packageStandalone({ codexRoot: path.resolve(args[1]), ripgrep: path.resolve(args[3]) }));
+  const output = packageStandalone({ codexRoot: path.resolve(args[1]), ripgrep: path.resolve(args[3]) });
+  // Create an upload-ready fork asset; publication remains a maintainer action.
+  const archive = output + ".zip";
+  const zipped = spawnSync("tar", ["-a", "-cf", archive, "-C", output, "addons"], { stdio: "inherit" });
+  if (zipped.status !== 0) throw new Error("Could not create the complete addon update archive");
+  writeFileSync(archive + ".sha256", createHash("sha256").update(readFileSync(archive)).digest("hex") + "\n");
+  console.log(output);
+  console.log(archive);
 }

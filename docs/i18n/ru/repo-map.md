@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ru source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=ru source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # Карта репозитория
 
@@ -18,6 +18,7 @@
 | --- | --- |
 | Настройка пользователя или поведение CLI | `local/crates/fennara-cli/` |
 | Полный Windows-аддон форка | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| Обновления форка | В CLI `src/codex_update.rs` управляет отдельной официальной средой Codex; `src/fork_update.rs` подготавливает полные выпуски форка. В демоне `chat/providers/codex_runtime.rs` планирует проверки и выбирает управляемую среду. См. `FORK.md`. |
 | Внешний протокол MCP или схемы | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Поиск или равенство Project Root | `local/crates/fennara-project-identity/` |
 | Встроенный чат или поведение фоновой службы | `local/crates/fennara-daemon/` |

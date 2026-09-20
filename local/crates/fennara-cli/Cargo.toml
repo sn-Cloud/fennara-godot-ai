@@ -12,6 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 base64 = "0.22"
+flate2 = "1"
+tar = "0.4"
 getrandom = "0.3"
 hmac = "0.12"
 json5 = "0.4"

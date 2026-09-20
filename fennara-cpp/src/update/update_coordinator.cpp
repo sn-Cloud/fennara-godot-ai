@@ -81,12 +81,8 @@ void UpdateCoordinator::_process(double delta) {
 }
 
 void UpdateCoordinator::start_prepare() {
-    // Complete addon builds are replaced as a folder, never by the upstream
-    // release updater which would discard the bundled fork runtime.
-    if (!app_paths::bundled_runtime_dir().is_empty()) {
-        _fail("FEN-UPDATE-BUNDLED", "Close Godot and replace addons/fennara with the new complete addon package.");
-        return;
-    }
+    // The CLI routes complete addon updates to the fork-only source; ordinary
+    // installs retain the original upstream update transaction.
     if (step == Step::Preparing || step == Step::WaitingForGodot) {
         return;
     }

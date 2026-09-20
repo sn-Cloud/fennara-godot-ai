@@ -25,9 +25,25 @@ or self-update occurs during bundled setup. A running different build must
 have no connected editors before it can be replaced; close other editors
 and retry when prompted. The setup panel reports failures and offers Retry.
 
-Updates to complete addons are performed by closing Godot and replacing
-the complete `addons/fennara` folder. The official online updater is disabled
-for these packages so it cannot overwrite fork functionality.
+Complete addons automatically check the fork's GitHub releases at editor startup.
+The existing update panel downloads and verifies a complete addon, then asks to
+close Godot before applying it. Its existing backup/recovery flow is retained.
+Only `sn-Cloud/fennara-godot-ai` complete Windows assets are accepted, so upstream
+releases cannot overwrite Codex support. Ordinary non-bundled installations
+continue using the original upstream discovery, installation and update paths.
+Older packages without this updater need one manual complete-folder replacement.
+
+The bundled Codex runtime independently checks the official npm stable release
+when the model catalog is requested, at most once every six hours. It verifies
+the registry's SHA-512 integrity and the extracted runtime before activation.
+Updates live in `%LOCALAPPDATA%/Fennara/codex-runtime`; existing conversations keep
+their original process and new connections use the updated runtime. Failures
+retain the previous runtime and are recorded in `codex-runtime/status.json`.
+Refresh the model picker after an update to see the new catalog. No Node.js is
+required on users' machines. Global Codex installs, ChatGPT credentials, other
+providers and non-bundled installations are untouched. `FENNARA_CODEX_COMMAND`
+disables managed updates for an explicit override; setting
+`FENNARA_CODEX_AUTO_UPDATE_DISABLED` disables background update checks.
 
 Maintainers build the Windows GDExtension with SCons and the Rust workspace
 with `cargo build --release --workspace --locked`, then package the folder:
@@ -41,6 +57,14 @@ The Codex directory must contain `bin/codex.exe` and `codex-resources/`
 vendor directory and its metadata are preserved. The script outputs
 `dist/fennara-addon-windows-x86_64-standalone-v<version>/addons/fennara`.
 It does not publish a release or change upstream release workflows.
+
+The packaging command also produces an adjacent versioned `.zip` and `.sha256`.
+To distribute a plugin update, a maintainer must explicitly publish a stable
+`v<version>` release on the fork with
+`fennara-addon-windows-x86_64-standalone-v<version>.zip`. GitHub's release asset
+must include its computed `sha256:` digest. The version must be greater than
+the installed addon version. Source-only releases are not offered as updates.
+Publishing remains manual; no existing upstream workflow is changed.
 
 Use official Codex **0.155.1 or newer stable** for complete addon builds.
 The packager checks `codex-package.json` before replacing an existing output.

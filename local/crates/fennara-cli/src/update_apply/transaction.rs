@@ -25,6 +25,13 @@ pub(super) fn apply_after_exit(
     )?;
     set_state(receipt_path, receipt, "applying")?;
     let layout = AppLayout::detect()?;
+    let bundled = root
+        .join(update_stage::STAGED_ADDON_NAME)
+        .join("local/windows-x86_64/bundle.json")
+        .is_file();
+    if bundled {
+        daemon_setup::ensure_switch_available(&layout, None)?;
+    }
     if let Err(error) = daemon_setup::shutdown_if_running(&layout)
         .map_err(|error| operation::failure(FailureClass::ValidationFailed, error))
     {
@@ -34,6 +41,13 @@ pub(super) fn apply_after_exit(
         .map_err(|error| operation::failure(FailureClass::ValidationFailed, error))?;
     launchers::snapshot(&layout, root)
         .map_err(|error| operation::failure(FailureClass::StageFilesystem, error))?;
+    if bundled {
+        fs::copy(
+            layout.bin_dir.join("fennara.exe"),
+            root.join("previous-fork-cli.exe"),
+        )
+        .map_err(|error| format!("Failed to back up the fork CLI: {error}"))?;
+    }
     receipt.launchers_snapshotted = true;
     if let Err(error) = update_stage::write_receipt(receipt_path, receipt) {
         return rollback_before_reopen(options, root, receipt_path, receipt, error);
@@ -41,8 +55,10 @@ pub(super) fn apply_after_exit(
     if let Err(error) = persist_previous_manifest(&layout, root, receipt) {
         return rollback_before_reopen(options, root, receipt_path, receipt, error);
     }
-    if let Err(error) = release_package::activate_staged_launchers(&receipt.to_version) {
-        return rollback_before_reopen(options, root, receipt_path, receipt, error);
+    if !bundled {
+        if let Err(error) = release_package::activate_staged_launchers(&receipt.to_version) {
+            return rollback_before_reopen(options, root, receipt_path, receipt, error);
+        }
     }
     if let Err(error) = replace_addon(&options.project_dir, root) {
         return rollback_before_reopen(options, root, receipt_path, receipt, error);
@@ -183,6 +199,11 @@ pub(super) fn restore_previous(project_dir: &Path, root: &Path) -> Result<(), St
     let layout = AppLayout::detect()?;
     let active = project_install::project_addon_dir(project_dir);
     let backup = root.join(update_stage::BACKUP_ADDON_NAME);
+    // A bundled installer may already have started its new daemon. Stop it
+    // before restoring the old runtime pointer and launchers during rollback.
+    if active.join("local/windows-x86_64/bundle.json").is_file() {
+        daemon_setup::shutdown_if_running(&layout)?;
+    }
     let mut errors = match restore_addon(&active, &backup, &receipt.from_version) {
         Ok(()) => Vec::new(),
         Err(error) => vec![error],
@@ -196,6 +217,14 @@ pub(super) fn restore_previous(project_dir: &Path, root: &Path) -> Result<(), St
         && let Err(error) = launchers::restore(&layout, root)
     {
         errors.push(error);
+    }
+    if root.join("previous-fork-cli.exe").is_file() {
+        if let Err(error) = fs::copy(
+            root.join("previous-fork-cli.exe"),
+            layout.bin_dir.join("fennara.exe"),
+        ) {
+            errors.push(format!("Failed to restore the fork CLI: {error}"));
+        }
     }
     if errors.is_empty() {
         Ok(())

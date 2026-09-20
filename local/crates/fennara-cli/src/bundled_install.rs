@@ -47,6 +47,9 @@ pub fn run(args: Vec<&str>) -> Result<(), String> {
     let source = addon.join("local/windows-x86_64");
     let raw = fs::read(source.join("bundle.json")).map_err(|e| e.to_string())?;
     let version = fs::read_to_string(addon.join("VERSION")).map_err(|e| e.to_string())?;
+    if version.trim() != env!("CARGO_PKG_VERSION") {
+        return Err("Bundled installer version mismatch".into());
+    }
     operation::phase(Phase::Verifying, "Checking the bundled Fennara files")?;
     let bundle = verify_bundle(&source, &raw, version.trim())?;
     operation::set_requested_version(&bundle.version)?;
@@ -108,10 +111,7 @@ pub fn run(args: Vec<&str>) -> Result<(), String> {
 // exact builds, including two fork builds with the same semantic version.
 fn verify_bundle(source: &Path, raw: &[u8], version: &str) -> Result<Bundle, String> {
     let bundle: Bundle = serde_json::from_slice(raw).map_err(|e| e.to_string())?;
-    if bundle.version != version
-        || bundle.version != env!("CARGO_PKG_VERSION")
-        || bundle.platform != "windows-x86_64"
-    {
+    if bundle.version != version || bundle.platform != "windows-x86_64" {
         return Err("The bundled runtime does not match this addon/platform".into());
     }
     for required in [
@@ -144,6 +144,13 @@ fn verify_bundle(source: &Path, raw: &[u8], version: &str) -> Result<Bundle, Str
         }
     }
     Ok(bundle)
+}
+
+// Validate a future fork package with its own declared version before staging it.
+pub(crate) fn verify_addon(addon: &Path, version: &str) -> Result<(), String> {
+    let root = addon.join("local/windows-x86_64");
+    let raw = fs::read(root.join("bundle.json")).map_err(|e| e.to_string())?;
+    verify_bundle(&root, &raw, version).map(|_| ())
 }
 
 // Replace small shared launchers through a temporary file. A locked executable

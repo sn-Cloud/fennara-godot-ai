@@ -1,4 +1,4 @@
-<!-- fennara-i18n: locale=ko source=docs/repo-map.md sha256=e1b54f5aefe2925198daf5771036cd2cf1ba48ec6c973aa63cf7e653b4ac64bb -->
+<!-- fennara-i18n: locale=ko source=docs/repo-map.md sha256=855b6719268e580790b2d253a0a6ff74fb6497c747caad51ea9fabb397324b86 -->
 <a id="repo-map"></a>
 # 저장소 지도
 
@@ -17,6 +17,7 @@
 | --- | --- |
 | 사용자 설정 또는 CLI 동작 | `local/crates/fennara-cli/` |
 | 포크의 완전한 Windows 애드온 | `scripts/package-windows-standalone-addon.mjs`, `local/crates/fennara-cli/src/bundled_install.rs`, `FORK.md` |
+| 포크 전용 업데이트 | CLI의 `src/codex_update.rs`는 별도의 공식 Codex 런타임을 관리하고 `src/fork_update.rs`는 포크의 전체 릴리스를 준비합니다. 데몬의 `chat/providers/codex_runtime.rs`는 확인을 예약하고 관리 런타임을 선택합니다. `FORK.md`를 참조하세요. |
 | 외부 MCP 프로토콜 또는 스키마 | `local/crates/fennara-mcp/`, `local/schemas/tools/` |
 | Project Root 검색 또는 동일성 판단 | `local/crates/fennara-project-identity/` |
 | 내장 채팅 또는 데몬 동작 | `local/crates/fennara-daemon/` |
