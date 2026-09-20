@@ -6,6 +6,17 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const binaries = ["fennara.exe", "fennara-daemon.exe", "fennara-daemon-runtime.exe", "fennara-mcp.exe", "fennara-mcp-runtime.exe"];
+const minimumCodexVersion = [0, 155, 1];
+
+// Validate the vendor's version before replacing a package. Older runtimes can
+// silently omit current models even when model/list itself succeeds.
+function validateCodexVersion(codexRoot) {
+  const metadata = JSON.parse(readFileSync(path.join(codexRoot, "codex-package.json"), "utf8"));
+  const version = String(metadata.version || "");
+  const parts = /^(\d+)\.(\d+)\.(\d+)$/.exec(version)?.slice(1).map(Number);
+  const difference = parts?.map((value, index) => value - minimumCodexVersion[index]).find(value => value !== 0) || 0;
+  if (!parts || difference < 0) throw new Error(`Codex ${minimumCodexVersion.join(".")} or newer stable version required; found ${version}`);
+}
 
 // Assemble a relocatable addon directory from already-built native components.
 // Validate every input first so a missing dependency cannot erase a previous package.
@@ -23,6 +34,7 @@ export function packageStandalone({ repo = root, codexRoot, ripgrep }) {
   for (const file of required) {
     if (!file || !existsSync(file)) throw new Error(`Missing package input: ${file}`);
   }
+  validateCodexVersion(codexRoot);
   const output = path.join(repo, "dist", `fennara-addon-windows-x86_64-standalone-v${version}`);
   // The resolved output is always a direct child of this repository's dist directory.
   rmSync(output, { recursive: true, force: true });

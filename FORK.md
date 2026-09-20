@@ -42,6 +42,22 @@ vendor directory and its metadata are preserved. The script outputs
 `dist/fennara-addon-windows-x86_64-standalone-v<version>/addons/fennara`.
 It does not publish a release or change upstream release workflows.
 
+Use official Codex **0.155.1 or newer stable** for complete addon builds.
+The packager checks `codex-package.json` before replacing an existing output.
+Codex 0.145.0 returned a valid catalog without Astra; 0.155.1 returned
+`gpt-6-astra` for the same account during verification. Model discovery also
+depends on the bundled runtime version, so refresh the runtime when updating
+the addon, rather than only refreshing its UI. Maintainers can stage the
+verified version without changing a global installation:
+
+```powershell
+npm install --prefix temp/codex-runtime-0.155.1 --no-audit --no-fund --ignore-scripts @openai/codex@0.155.1
+node scripts/package-windows-standalone-addon.mjs --codex-root temp/codex-runtime-0.155.1/node_modules/@openai/codex-win32-x64/vendor/x86_64-pc-windows-msvc --ripgrep <path-to-rg.exe>
+```
+
+These are maintainer build steps; addon users still only replace the complete
+`addons/fennara` folder and run setup in Godot.
+
 Validate a built package with `node scripts/test-standalone-addon.mjs
 <godot.exe> <complete-addon-directory>` using the main Godot executable (not
 the Windows console wrapper). The test requires the daemon port to be free,

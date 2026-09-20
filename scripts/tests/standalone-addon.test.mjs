@@ -26,7 +26,7 @@ test("complete addon preserves Codex helpers and verifies every runtime file aft
     put("vendor/bin/codex.exe");
     put("vendor/codex-resources/codex-command-runner.exe");
     put("vendor/codex-resources/codex-windows-sandbox-setup.exe");
-    put("vendor/codex-package.json", '{"version":"test"}');
+    put("vendor/codex-package.json", '{"version":"0.155.1"}');
     const options = { repo, codexRoot: path.join(repo, "vendor"), ripgrep: put("rg.exe") };
     const output = packageStandalone(options);
     const addon = path.join(output, "addons/fennara");
@@ -38,6 +38,12 @@ test("complete addon preserves Codex helpers and verifies every runtime file aft
     assert.ok(manifest.files["codex/codex-resources/codex-command-runner.exe"]);
     for (const [name, hash] of Object.entries(manifest.files)) assert.equal(createHash("sha256").update(readFileSync(path.join(runtime, name))).digest("hex"), hash);
     const previous = readFileSync(path.join(runtime, "bundle.json"), "utf8");
+    for (const version of ["0.145.0", "0.155.0", "0.155.1-alpha.1", "invalid"]) {
+      put("vendor/codex-package.json", JSON.stringify({ version }));
+      assert.throws(() => packageStandalone(options), /newer stable version required/);
+      assert.equal(readFileSync(path.join(runtime, "bundle.json"), "utf8"), previous);
+    }
+    put("vendor/codex-package.json", '{"version":"0.155.1"}');
     rmSync(path.join(repo, "vendor/bin/codex.exe"));
     assert.throws(() => packageStandalone(options), /Missing package input/);
     assert.equal(readFileSync(path.join(runtime, "bundle.json"), "utf8"), previous);
