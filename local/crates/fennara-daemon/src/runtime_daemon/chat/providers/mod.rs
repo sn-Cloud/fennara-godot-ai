@@ -45,8 +45,8 @@ pub(crate) use request::build_messages;
 pub(crate) use stream::FinishReason;
 #[allow(unused_imports)]
 pub(crate) use types::{
-    ChatCompletion, ChatRequest, MalformedToolCall, ProviderId, ProviderSettings, StreamItem,
-    ToolCallObservation,
+    ChatCompletion, ChatRequest, MalformedToolCall, ProviderApproval, ProviderId, ProviderSettings,
+    StreamItem, ToolCallObservation,
 };
 
 #[derive(Clone, Debug, Serialize)]
@@ -627,6 +627,7 @@ impl StreamAccumulator {
     fn items_for_event(&mut self, event: StreamEvent) -> Result<Vec<StreamItem>, LlmError> {
         let mut items = Vec::new();
         match event {
+            StreamEvent::Approval(request) => items.push(StreamItem::Approval(request)),
             StreamEvent::TextDelta { text: delta, .. } => {
                 self.text.push_str(&delta);
                 if self.text.len().saturating_sub(self.emit_len("__text__")) >= 24 {

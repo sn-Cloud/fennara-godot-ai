@@ -45,6 +45,7 @@ pub(super) async fn stream_one_assistant<S>(
     state: &AppState,
     chat_id: &str,
     project_path: Option<String>,
+    session_id: &str,
     approval_mode: String,
     trace: trace::TraceRecorder,
 ) -> Result<Result<StreamedAssistant, AssistantStreamError>, S::Error>
@@ -109,6 +110,9 @@ where
                     emitted_output = true;
                 }
                 match item {
+                    StreamItem::Approval(approval) => {
+                        review_provider_approval(sender, request_id.clone(), state, chat_id, session_id, approval).await?;
+                    }
                     StreamItem::Text { content, done } => {
                         send_json(
                             sender,
@@ -335,13 +339,91 @@ where
     }
 }
 
+// Reuse the existing session-bound approval UI. A disconnected UI, timeout or
+// cancelled chat must never grant a provider operation implicitly.
+async fn review_provider_approval<S>(
+    sender: &mut S,
+    request_id: Option<String>,
+    state: &AppState,
+    chat_id: &str,
+    session_id: &str,
+    approval: super::super::providers::ProviderApproval,
+) -> Result<(), S::Error>
+where
+    S: Sink<Message> + Unpin,
+{
+    use crate::runtime_daemon::permissions::{
+        ApprovalMode, PendingToolApproval, ToolApprovalRequest, ToolApprovalReview,
+        ToolApprovalStatus, ToolPermissionKind, approval_request_payload,
+    };
+    let Some(responder) = approval.responder.lock().await.take() else {
+        return Ok(());
+    };
+    let id = format!(
+        "codex-approval-{}",
+        state
+            .request_counter
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            + 1
+    );
+    let (tx, rx) = oneshot::channel();
+    let mut request = ToolApprovalRequest {
+        id: id.clone(),
+        chat_id: chat_id.to_string(),
+        session_id: session_id.to_string(),
+        tool_call_id: id.clone(),
+        tool_name: approval.name.clone(),
+        tool_kind: ToolPermissionKind::ExecutesProject,
+        tool_kind_label: "Codex operation requiring approval",
+        approval_mode: ApprovalMode::Ask,
+        status: ToolApprovalStatus::PendingApproval,
+        reason: "Codex requires your approval before this operation can run.".to_string(),
+        summary: approval
+            .details
+            .get("message")
+            .or_else(|| approval.details.get("reason"))
+            .and_then(Value::as_str)
+            .unwrap_or(&approval.name)
+            .to_string(),
+    };
+    state.pending_tool_approvals.write().await.insert(
+        id.clone(),
+        PendingToolApproval {
+            request: request.clone(),
+            responder: tx,
+        },
+    );
+    let update = |request: &ToolApprovalRequest| {
+        json!({
+            "type": "chat_item_update", "request_id": request_id,
+            "item": { "id": id, "type": "function_call", "name": approval.name,
+                "arguments": approval.details.to_string(), "status": request.status.as_str(),
+                "approval": approval_request_payload(request) }
+        })
+    };
+    if let Err(error) = send_json(sender, update(&request)).await {
+        state.pending_tool_approvals.write().await.remove(&id);
+        let _ = responder.send(false);
+        return Err(error);
+    }
+    let review = super::tool_loop::wait_for_tool_approval(state, chat_id, &id, rx).await;
+    let accepted = review == ToolApprovalReview::Approved;
+    request.status = if accepted {
+        ToolApprovalStatus::Approved
+    } else {
+        ToolApprovalStatus::Denied
+    };
+    let _ = responder.send(accepted);
+    send_json(sender, update(&request)).await
+}
+
 fn stream_item_has_assistant_output(item: &StreamItem) -> bool {
     match item {
         StreamItem::Text { .. }
         | StreamItem::FunctionCall { .. }
         | StreamItem::FunctionCallError { .. } => true,
         StreamItem::Reasoning { content, .. } => !content.trim().is_empty(),
-        StreamItem::Status { .. } | StreamItem::Usage(_) => false,
+        StreamItem::Status { .. } | StreamItem::Usage(_) | StreamItem::Approval(_) => false,
     }
 }
 
@@ -492,6 +574,70 @@ fn tool_call_arguments(call: &Value) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Exercise the same approval payload and session check used by the web UI.
+    #[tokio::test]
+    async fn provider_approval_uses_session_bound_user_decision() {
+        use crate::runtime_daemon::permissions::ToolApprovalReview;
+        for accepted in [false, true] {
+            let (shutdown_tx, _) = oneshot::channel();
+            let state = AppState::new(shutdown_tx);
+            let (tx, rx) = oneshot::channel();
+            let approval = super::super::super::providers::ProviderApproval {
+                name: "mcpServer/elicitation/request".into(),
+                details: json!({"message":"Run fixture tool?"}),
+                responder: std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx))),
+            };
+            let mut sink = Box::pin(futures_util::sink::unfold(
+                state.clone(),
+                move |state, message: Message| async move {
+                    let Message::Text(text) = message else {
+                        panic!("expected UI update")
+                    };
+                    let update: Value = serde_json::from_str(&text).unwrap();
+                    if update["item"]["status"] == "pending_approval" {
+                        let id = update["item"]["approval"]["id"].as_str().unwrap();
+                        let decision = if accepted {
+                            ToolApprovalReview::Approved
+                        } else {
+                            ToolApprovalReview::Denied
+                        };
+                        assert!(
+                            super::super::super::resolve_tool_approval(
+                                &state,
+                                "another-session",
+                                id,
+                                decision
+                            )
+                            .await
+                            .is_err()
+                        );
+                        super::super::super::resolve_tool_approval(
+                            &state,
+                            "fixture-session",
+                            id,
+                            decision,
+                        )
+                        .await
+                        .unwrap();
+                    }
+                    Ok::<_, std::convert::Infallible>(state)
+                },
+            ));
+            review_provider_approval(
+                &mut sink,
+                None,
+                &state,
+                "fixture-chat",
+                "fixture-session",
+                approval,
+            )
+            .await
+            .unwrap();
+            assert_eq!(rx.await.unwrap(), accepted);
+            assert!(state.pending_tool_approvals.read().await.is_empty());
+        }
+    }
 
     #[test]
     fn final_tool_call_helpers_extract_normalized_parts() {

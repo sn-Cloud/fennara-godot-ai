@@ -315,6 +315,7 @@ pub(crate) struct ChatRequest {
 
 #[derive(Clone, Debug)]
 pub(crate) enum StreamItem {
+    Approval(ProviderApproval),
     Text {
         content: String,
         done: bool,
@@ -339,6 +340,16 @@ pub(crate) enum StreamItem {
         message: String,
     },
     Usage(Value),
+}
+
+// A one-shot decision for a provider-owned operation. Clones share the same
+// responder so an approval can never be applied twice.
+#[derive(Clone, Debug)]
+pub(crate) struct ProviderApproval {
+    pub(crate) name: String,
+    pub(crate) details: Value,
+    pub(crate) responder:
+        std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
 }
 
 #[derive(Clone, Debug)]

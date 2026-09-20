@@ -499,6 +499,7 @@ where
             state,
             &chat_id,
             scope.project_path.clone(),
+            &bound_project.session_id,
             settings.approval_mode.as_str().to_string(),
             current_trace.clone(),
         )

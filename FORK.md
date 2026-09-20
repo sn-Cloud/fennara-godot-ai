@@ -123,6 +123,12 @@ refresh chat history.
 The default Fennara permission mode maps to Codex `thread/start` sandbox mode
 `workspace-write`. Choosing Fennara **Full access** maps it to `danger-full-access`.
 These request enum values differ from the camel-case sandbox policy types in responses.
+Codex threads use `on-request` approval policy. Command, file-change, permission,
+and MCP tool approval requests are shown through Fennara's existing Approve/Deny
+controls, scoped to the originating Godot session. Declining, cancelling, or
+timing out does not grant permission. Full access changes the sandbox scope;
+explicit approvals requested by Codex or an MCP server still require a decision.
+Generic MCP input forms and authentication URL flows are not treated as tool approvals.
 
 Codex sessions can use the existing Fennara MCP tools for Godot editor and
 runtime operations. This does not install or replace Fennara MCP with Godot MCP

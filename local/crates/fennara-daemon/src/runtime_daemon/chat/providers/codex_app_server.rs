@@ -292,7 +292,7 @@ where
     }
     thread_params.insert(
         "approvalPolicy".to_string(),
-        Value::String("never".to_string()),
+        Value::String("on-request".to_string()),
     );
     thread_params.insert(
         "sandbox".to_string(),
@@ -338,6 +338,26 @@ where
     let mut latest_usage: Option<Usage> = None;
     loop {
         let message = connection.read_message().await?;
+        if let Some((accepted_result, declined_result)) = approval_responses(&message, &thread_id) {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            let keep_going = on_event(StreamEvent::Approval(super::types::ProviderApproval {
+                name: message["method"]
+                    .as_str()
+                    .unwrap_or("Codex approval")
+                    .to_string(),
+                details: message["params"].clone(),
+                responder: std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx))),
+            }))
+            .await?;
+            let accepted = keep_going && rx.await.unwrap_or(false);
+            connection.write_json(&json!({ "id": message["id"], "result": if accepted { accepted_result } else { declined_result } })).await?;
+            if !keep_going {
+                connection.interrupt_turn(&thread_id).await;
+                connection.shutdown().await;
+                return Ok(());
+            }
+            continue;
+        }
         if connection.respond_to_server_request(&message).await? {
             continue;
         }
@@ -668,6 +688,7 @@ fn final_agent_text(turn: &Value) -> Option<String> {
 }
 
 struct CodexConnection {
+    pending: std::collections::VecDeque<Value>,
     child: Child,
     stdin: ChildStdin,
     lines: Lines<BufReader<ChildStdout>>,
@@ -731,6 +752,7 @@ impl CodexConnection {
             message: "Codex app-server stdout was unavailable.".to_string(),
         })?;
         let mut connection = Self {
+            pending: std::collections::VecDeque::new(),
             child,
             stdin,
             lines: BufReader::new(stdout).lines(),
@@ -781,11 +803,13 @@ impl CodexConnection {
 
     async fn wait_for_response(&mut self, id: u64) -> Result<Value, LlmError> {
         loop {
-            let message = self.read_message().await?;
-            if self.respond_to_server_request(&message).await? {
-                continue;
-            }
-            if message.get("id").and_then(Value::as_u64) != Some(id) {
+            let message = self.read_wire_message().await?;
+            // Notifications and server requests may precede our RPC response.
+            // Keep them for the turn loop, including approval prompts.
+            if message.get("method").is_some()
+                || message.get("id").and_then(Value::as_u64) != Some(id)
+            {
+                self.pending.push_back(message);
                 continue;
             }
             if let Some(error) = message.get("error") {
@@ -796,6 +820,13 @@ impl CodexConnection {
     }
 
     async fn read_message(&mut self) -> Result<Value, LlmError> {
+        if let Some(message) = self.pending.pop_front() {
+            return Ok(message);
+        }
+        self.read_wire_message().await
+    }
+
+    async fn read_wire_message(&mut self) -> Result<Value, LlmError> {
         loop {
             let line = self
                 .lines
@@ -973,9 +1004,53 @@ fn resolve_codex_command() -> Option<PathBuf> {
     None
 }
 
-// thread/start takes the kebab-case SandboxMode enum, not the camel-case
-// SandboxPolicy discriminator returned in responses. Only explicit full access
-// should disable the workspace sandbox.
+// Translate only explicit operation approvals belonging to this thread. Generic
+// MCP forms can contain sensitive input and must not be accepted as approvals.
+fn approval_responses(message: &Value, thread_id: &str) -> Option<(Value, Value)> {
+    message.get("id")?;
+    let params = message.get("params")?;
+    if params.get("threadId").and_then(Value::as_str) != Some(thread_id) {
+        return None;
+    }
+    match message.get("method")?.as_str()? {
+        "item/commandExecution/requestApproval" | "item/fileChange/requestApproval" => Some((
+            json!({"decision": "accept"}),
+            json!({"decision": "decline"}),
+        )),
+        "item/permissions/requestApproval" => Some((
+            json!({"permissions": params.get("permissions")?, "scope": "turn"}),
+            json!({"permissions": {}, "scope": "turn"}),
+        )),
+        "mcpServer/elicitation/request"
+            if params
+                .pointer("/_meta/codex_approval_kind")
+                .and_then(Value::as_str)
+                == Some("mcp_tool_call")
+                && params.get("mode").and_then(Value::as_str) == Some("form")
+                && params
+                    .pointer("/requestedSchema/type")
+                    .and_then(Value::as_str)
+                    == Some("object")
+                && params
+                    .pointer("/requestedSchema/properties")
+                    .and_then(Value::as_object)
+                    .is_some_and(Map::is_empty)
+                && params
+                    .pointer("/requestedSchema/required")
+                    .and_then(Value::as_array)
+                    .is_none_or(Vec::is_empty) =>
+        {
+            Some((
+                json!({"action": "accept", "content": {}}),
+                json!({"action": "decline", "content": null}),
+            ))
+        }
+        _ => None,
+    }
+}
+
+// thread/start uses SandboxMode, not the camel-case response discriminator.
+// Only explicit full access should disable the workspace sandbox.
 fn thread_sandbox_mode(approval_mode: &str) -> &'static str {
     if approval_mode == "full_access" {
         "danger-full-access"
@@ -991,6 +1066,108 @@ fn is_executable_candidate(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn approval_translation_rejects_other_threads_and_input_forms() {
+        let request = json!({"id":0,"method":"mcpServer/elicitation/request","params":{
+            "threadId":"thread", "mode":"form", "_meta":{"codex_approval_kind":"mcp_tool_call"},
+            "requestedSchema":{"type":"object","properties":{}}
+        }});
+        let (allow, deny) = approval_responses(&request, "thread").unwrap();
+        assert_eq!(allow, json!({"action":"accept","content":{}}));
+        assert_eq!(deny["action"], "decline");
+        assert!(approval_responses(&request, "other-thread").is_none());
+        let mut input = request.clone();
+        input["params"]["requestedSchema"]["properties"] = json!({"password":{"type":"string"}});
+        assert!(approval_responses(&input, "thread").is_none());
+        input = request.clone();
+        input["params"]["_meta"] = json!({});
+        assert!(approval_responses(&input, "thread").is_none());
+        input = request;
+        input.as_object_mut().unwrap().remove("id");
+        assert!(approval_responses(&input, "thread").is_none());
+    }
+
+    // This inert MCP tool lets the official runtime exercise approval/rejection
+    // without access to a real Godot project.
+    #[tokio::test]
+    #[ignore = "requires installed Codex and Node.js; no model request"]
+    async fn live_official_mcp_approval_roundtrip() {
+        run_mcp_approval_fixture(false).await;
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Codex login and Node.js; sends two short model requests"]
+    async fn live_model_mcp_approval_roundtrip() {
+        run_mcp_approval_fixture(true).await;
+    }
+
+    async fn run_mcp_approval_fixture(use_model: bool) {
+        let folder = std::env::temp_dir().join(format!("fennara-approval-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        let script = folder.join("fixture.cjs");
+        std::fs::write(&script, r#"
+const rl = require('node:readline').createInterface({input:process.stdin});
+let pending;
+rl.on('line', line => {
+ const m=JSON.parse(line); if(m.id===undefined)return;
+ if(m.id===700 && !m.method) {
+  const accepted=m.result?.action==='accept';
+  console.log(JSON.stringify({jsonrpc:'2.0',id:pending,result:{content:[{type:'text',text:accepted?'APPROVAL_PROBE_EXECUTED':'DENIED'}],isError:!accepted}})); return;
+ }
+ let result={};
+ if(m.method==='initialize') result={protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'approval-fixture',version:'1'}};
+ if(m.method==='tools/list') result={tools:[{name:'approval_probe',description:'An inert approval test. Returns a fixed marker and has no side effects.',inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:false,destructiveHint:true}}]};
+ if(m.method==='tools/call') {
+  pending=m.id;
+  console.log(JSON.stringify({jsonrpc:'2.0',id:700,method:'elicitation/create',params:{mode:'form',message:'Allow the inert approval probe?',requestedSchema:{type:'object',properties:{}},_meta:{codex_approval_kind:'mcp_tool_call'}}})); return;
+ }
+ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));
+});
+"#).unwrap();
+        for accepted in [false, true] {
+            let mut connection = CodexConnection::spawn().await.unwrap();
+            let thread = connection.request("thread/start", json!({
+                "ephemeral":true, "model":"gpt-6-astra", "approvalPolicy":"on-request", "sandbox":"workspace-write",
+                "cwd":folder,
+                "config": {"mcp_servers.approval_fixture.command":"node",
+                    "mcp_servers.approval_fixture.args":[script],
+                    "mcp_servers.approval_fixture.default_tools_approval_mode":"prompt"}
+            }), RPC_TIMEOUT).await.unwrap();
+            let thread_id = thread["thread"]["id"].as_str().unwrap();
+            if use_model {
+                connection.request("turn/start", json!({
+                "threadId":thread_id, "effort":"low", "input":[{"type":"text","text":"Call the approval_fixture MCP tool approval_probe exactly once with empty arguments. It is an inert test tool. Do not use any other tools or read files. If denied, stop immediately without retrying. Report the tool result briefly."}]
+            }), RPC_TIMEOUT).await.unwrap();
+            } else {
+                connection.write_json(&json!({"id":9000,"method":"mcpServer/tool/call","params":{
+                    "threadId":thread_id,"server":"approval_fixture","tool":"approval_probe","arguments":{}}})).await.unwrap();
+            }
+            let executed = timeout(Duration::from_secs(120), async {
+                let mut reviewed = false;
+                let mut executed = false;
+                loop {
+                    let message = connection.read_message().await.unwrap();
+                    if message.get("method").is_some() && message.get("id").is_some() {
+                        println!("Official approval request: {}", message);
+                        let (allow, deny) = approval_responses(&message, thread_id).expect("recognized official approval");
+                        connection.write_json(&json!({"id":message["id"],"result":if accepted {allow} else {deny}})).await.unwrap();
+                        reviewed = true;
+                    } else if message["method"] == "item/completed" && message["params"]["item"]["type"] == "mcpToolCall" {
+                        executed |= message["params"]["item"].to_string().contains("APPROVAL_PROBE_EXECUTED");
+                    } else if message["method"] == "turn/completed" {
+                        assert!(reviewed, "must request approval before execution: {message}");
+                        break executed;
+                    } else if !use_model && message["id"] == 9000 {
+                        assert!(reviewed, "must request approval: {message}");
+                        break message.to_string().contains("APPROVAL_PROBE_EXECUTED");
+                    }
+                }
+            }).await.unwrap();
+            assert_eq!(executed, accepted);
+            connection.shutdown().await;
+        }
+    }
 
     #[test]
     fn official_metadata_controls_model_and_effort_selection() {

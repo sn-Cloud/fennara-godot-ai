@@ -57,6 +57,7 @@ impl FinishReason {
 #[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub(crate) enum StreamEvent {
+    Approval(super::types::ProviderApproval),
     StepStart {
         index: u32,
     },
