@@ -24,6 +24,9 @@ pub(super) struct StreamedAssistant {
 pub(super) struct AssistantStreamError {
     pub(super) error: LlmError,
     pub(super) emitted_output: bool,
+    // Number of provider-executed tool results this stream persisted. Lets
+    // the runner keep their replay context when the turn later fails.
+    pub(super) persisted_tool_calls: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -106,301 +109,333 @@ where
         let _ = done_tx.send(result);
     });
 
-    let mut usage: Option<Value> = None;
-    let mut reasoning_content: Option<String> = None;
-    let mut provisional_tools: HashMap<String, ProvisionalTool> = HashMap::new();
     let mut recorded_tool_results: Vec<RecordedToolResult> = Vec::new();
-    let mut emitted_output = false;
-    let mut done_rx = done_rx;
-    // Poll the item channel first. Every item callback returns before the
-    // provider wrapper resolves the completion, so all queued events —
-    // including persisted tool results — are handled before the loop exits.
-    let completion = loop {
-        match next_stream_step(&mut item_rx, &mut done_rx).await {
-            StreamStep::Item(item) => {
-                if stream_item_has_assistant_output(&item) {
-                    emitted_output = true;
-                }
-                match item {
-                    StreamItem::Approval(approval) => {
-                        review_provider_approval(sender, request_id.clone(), state, chat_id, session_id, approval).await?;
+    // The block below streams one assistant turn and collects completed tool
+    // results along the way. They are persisted after it returns, however it
+    // ended — a UI send failure must not discard already executed work.
+    let mut stream_outcome = async {
+        let mut usage: Option<Value> = None;
+        let mut reasoning_content: Option<String> = None;
+        let mut provisional_tools: HashMap<String, ProvisionalTool> = HashMap::new();
+        let mut emitted_output = false;
+        let mut done_rx = done_rx;
+        // Poll the item channel first. Every item callback returns before the
+        // provider wrapper resolves the completion, so all queued events —
+        // including persisted tool results — are handled before the loop
+        // exits.
+        let completion = loop {
+            match next_stream_step(&mut item_rx, &mut done_rx).await {
+                StreamStep::Item(item) => {
+                    if stream_item_has_assistant_output(&item) {
+                        emitted_output = true;
                     }
-                    StreamItem::Text { content, done } => {
-                        send_json(
-                            sender,
-                            json!({
-                                "type": "chat_item_update",
-                                "request_id": request_id.clone(),
-                                "item": {
-                                    "id": assistant_message_id,
-                                    "type": "message",
-                                    "content": content,
-                                    "status": if done { "done" } else { "in_progress" }
-                                }
-                            }),
-                        )
-                        .await?;
-                    }
-                    StreamItem::Reasoning { content, done } => {
-                        let clean_content = content.trim();
-                        if clean_content.is_empty() {
-                            continue;
+                    match item {
+                        StreamItem::Approval(approval) => {
+                            review_provider_approval(sender, request_id.clone(), state, chat_id, session_id, approval).await?;
                         }
-                        reasoning_content = Some(clean_content.to_string());
-                        send_json(
-                            sender,
-                            json!({
-                                "type": "chat_item_update",
-                                "request_id": request_id.clone(),
-                                "item": {
-                                    "id": "reasoning",
-                                    "type": "reasoning",
-                                    "content": clean_content,
-                                    "status": if done { "done" } else { "in_progress" }
-                                }
-                            }),
-                        )
-                        .await?;
-                    }
-                    StreamItem::FunctionCall { id, name, arguments, done } => {
-                        let was_new = !provisional_tools.contains_key(&id);
-                        let entry = provisional_tools.entry(id.clone()).or_insert_with(|| ProvisionalTool {
-                            name: String::new(),
-                            arguments: String::new(),
-                            terminal: false,
-                            delta_count: 0,
-                        });
-                        entry.delta_count = entry.delta_count.saturating_add(1);
-                        if !name.is_empty() {
-                            entry.name = name.clone();
-                        }
-                        entry.arguments = arguments.clone();
-                        if done {
-                            entry.terminal = true;
-                        }
-                        let preview_trace = trace.with_provisional_tool(id.clone());
-                        preview_trace.event_status(
-                            if was_new { "tool.preview.start" } else { "tool.preview.delta" },
-                            if done { "queued" } else { "preparing" },
-                            json!({
-                                "name_present": !entry.name.is_empty(),
-                                "tool_name": if entry.name.is_empty() { None } else { Some(entry.name.as_str()) },
-                                "arguments_bytes": entry.arguments.len(),
-                                "delta_count": entry.delta_count
-                            }),
-                        );
-                        if done {
-                            preview_trace
-                                .with_tool_call(id.clone())
-                                .event_status(
-                                    "tool.preview.finalized",
-                                    "ok",
-                                    json!({
-                                        "tool_name": if entry.name.is_empty() { None } else { Some(entry.name.as_str()) },
-                                        "arguments_bytes": entry.arguments.len(),
-                                        "delta_count": entry.delta_count
-                                    }),
-                                );
-                        }
-                        let status = if done { "queued" } else { "preparing" };
-                        send_json(
-                            sender,
-                            json!({
-                                "type": "chat_item_update",
-                                "request_id": request_id.clone(),
-                                "item": {
-                                    "id": id,
-                                    "type": "function_call",
-                                    "name": name,
-                                    "arguments": arguments,
-                                    "status": status
-                                }
-                            }),
-                        )
-                        .await?;
-                    }
-                    StreamItem::FunctionCallError { id, name, arguments, message } => {
-                        provisional_tools.insert(
-                            id.clone(),
-                            ProvisionalTool {
-                                name: name.clone(),
-                                arguments: arguments.clone(),
-                                terminal: true,
-                                delta_count: 1,
-                            },
-                        );
-                        trace
-                            .with_provisional_tool(id.clone())
-                            .error(
-                                "tool.preview.failed",
-                                "failed",
+                        StreamItem::Text { content, done } => {
+                            send_json(
+                                sender,
                                 json!({
-                                    "tool_name": if name.is_empty() { None } else { Some(name.as_str()) },
-                                    "arguments_bytes": arguments.len(),
-                                    "message": message.as_str()
+                                    "type": "chat_item_update",
+                                    "request_id": request_id.clone(),
+                                    "item": {
+                                        "id": assistant_message_id,
+                                        "type": "message",
+                                        "content": content,
+                                        "status": if done { "done" } else { "in_progress" }
+                                    }
+                                }),
+                            )
+                            .await?;
+                        }
+                        StreamItem::Reasoning { content, done } => {
+                            let clean_content = content.trim();
+                            if clean_content.is_empty() {
+                                continue;
+                            }
+                            reasoning_content = Some(clean_content.to_string());
+                            send_json(
+                                sender,
+                                json!({
+                                    "type": "chat_item_update",
+                                    "request_id": request_id.clone(),
+                                    "item": {
+                                        "id": "reasoning",
+                                        "type": "reasoning",
+                                        "content": clean_content,
+                                        "status": if done { "done" } else { "in_progress" }
+                                    }
+                                }),
+                            )
+                            .await?;
+                        }
+                        StreamItem::FunctionCall { id, name, arguments, done } => {
+                            let was_new = !provisional_tools.contains_key(&id);
+                            let entry = provisional_tools.entry(id.clone()).or_insert_with(|| ProvisionalTool {
+                                name: String::new(),
+                                arguments: String::new(),
+                                terminal: false,
+                                delta_count: 0,
+                            });
+                            entry.delta_count = entry.delta_count.saturating_add(1);
+                            if !name.is_empty() {
+                                entry.name = name.clone();
+                            }
+                            entry.arguments = arguments.clone();
+                            if done {
+                                entry.terminal = true;
+                            }
+                            let preview_trace = trace.with_provisional_tool(id.clone());
+                            preview_trace.event_status(
+                                if was_new { "tool.preview.start" } else { "tool.preview.delta" },
+                                if done { "queued" } else { "preparing" },
+                                json!({
+                                    "name_present": !entry.name.is_empty(),
+                                    "tool_name": if entry.name.is_empty() { None } else { Some(entry.name.as_str()) },
+                                    "arguments_bytes": entry.arguments.len(),
+                                    "delta_count": entry.delta_count
                                 }),
                             );
-                        send_json(
-                            sender,
-                            json!({
-                                "type": "chat_item_update",
-                                "request_id": request_id.clone(),
-                                "item": {
-                                    "id": id,
-                                    "type": "function_call",
-                                    "name": name,
-                                    "arguments": arguments,
-                                    "content": message,
-                                    "status": "failed"
-                                }
-                            }),
-                        )
-                        .await?;
-                    }
-                    // A tool the provider already executed itself. The card
-                    // update flows immediately; durable persistence happens
-                    // once the stream settles, after the completion breaks the
-                    // loop above.
-                    StreamItem::FunctionCallResult { id, name, arguments, status, content, raw } => {
-                        if let Some(tool) = provisional_tools.get_mut(&id) {
-                            tool.terminal = true;
+                            if done {
+                                preview_trace
+                                    .with_tool_call(id.clone())
+                                    .event_status(
+                                        "tool.preview.finalized",
+                                        "ok",
+                                        json!({
+                                            "tool_name": if entry.name.is_empty() { None } else { Some(entry.name.as_str()) },
+                                            "arguments_bytes": entry.arguments.len(),
+                                            "delta_count": entry.delta_count
+                                        }),
+                                    );
+                            }
+                            let status = if done { "queued" } else { "preparing" };
+                            send_json(
+                                sender,
+                                json!({
+                                    "type": "chat_item_update",
+                                    "request_id": request_id.clone(),
+                                    "item": {
+                                        "id": id,
+                                        "type": "function_call",
+                                        "name": name,
+                                        "arguments": arguments,
+                                        "status": status
+                                    }
+                                }),
+                            )
+                            .await?;
                         }
-                        let record = RecordedToolResult {
-                            id,
-                            name,
-                            arguments,
-                            status,
-                            content,
-                            raw,
-                        };
-                        send_json(
-                            sender,
-                            json!({
-                                "type": "chat_item_update",
-                                "request_id": request_id.clone(),
-                                "item": {
-                                    "id": &record.id,
-                                    "type": "tool_result",
-                                    "name": &record.name,
-                                    "content": &record.content,
-                                    "status": &record.status
-                                }
-                            }),
-                        )
-                        .await?;
-                        recorded_tool_results.push(record);
-                    }
-                    StreamItem::Status { message } => {
-                        send_json(
-                            sender,
-                            json!({
-                                "type": "chat_item_update",
-                                "request_id": request_id.clone(),
-                                "item": {
-                                    "id": "status",
-                                    "type": "reasoning",
-                                    "content": message,
-                                    "status": "in_progress"
-                                }
-                            }),
-                        )
-                        .await?;
-                    }
-                    StreamItem::Usage(next_usage) => {
-                        usage = Some(next_usage);
+                        StreamItem::FunctionCallError { id, name, arguments, message } => {
+                            provisional_tools.insert(
+                                id.clone(),
+                                ProvisionalTool {
+                                    name: name.clone(),
+                                    arguments: arguments.clone(),
+                                    terminal: true,
+                                    delta_count: 1,
+                                },
+                            );
+                            trace
+                                .with_provisional_tool(id.clone())
+                                .error(
+                                    "tool.preview.failed",
+                                    "failed",
+                                    json!({
+                                        "tool_name": if name.is_empty() { None } else { Some(name.as_str()) },
+                                        "arguments_bytes": arguments.len(),
+                                        "message": message.as_str()
+                                    }),
+                                );
+                            send_json(
+                                sender,
+                                json!({
+                                    "type": "chat_item_update",
+                                    "request_id": request_id.clone(),
+                                    "item": {
+                                        "id": id,
+                                        "type": "function_call",
+                                        "name": name,
+                                        "arguments": arguments,
+                                        "content": message,
+                                        "status": "failed"
+                                    }
+                                }),
+                            )
+                            .await?;
+                        }
+                        // A tool the provider already executed itself. Record
+                        // it before the card send so even a failing UI send
+                        // cannot skip its later persistence.
+                        StreamItem::FunctionCallResult { id, name, arguments, status, content, raw } => {
+                            if let Some(tool) = provisional_tools.get_mut(&id) {
+                                tool.terminal = true;
+                            }
+                            let record = RecordedToolResult {
+                                id,
+                                name,
+                                arguments,
+                                status,
+                                content,
+                                raw,
+                            };
+                            recorded_tool_results.push(record);
+                            let record = recorded_tool_results.last().expect("record just pushed");
+                            send_json(
+                                sender,
+                                json!({
+                                    "type": "chat_item_update",
+                                    "request_id": request_id.clone(),
+                                    "item": {
+                                        "id": &record.id,
+                                        "type": "tool_result",
+                                        "name": &record.name,
+                                        "content": &record.content,
+                                        "status": &record.status
+                                    }
+                                }),
+                            )
+                            .await?;
+                        }
+                        StreamItem::Status { message } => {
+                            send_json(
+                                sender,
+                                json!({
+                                    "type": "chat_item_update",
+                                    "request_id": request_id.clone(),
+                                    "item": {
+                                        "id": "status",
+                                        "type": "reasoning",
+                                        "content": message,
+                                        "status": "in_progress"
+                                    }
+                                }),
+                            )
+                            .await?;
+                        }
+                        StreamItem::Usage(next_usage) => {
+                            usage = Some(next_usage);
+                        }
                     }
                 }
+                StreamStep::Completion(result) => break result,
             }
-            StreamStep::Completion(result) => break result,
-        }
-    };
+        };
 
-    match completion {
-        Ok(completion) => {
-            trace.event_status(
-                "assistant.finalized",
-                "ok",
-                json!({
-                    "content_chars": completion.content.chars().count(),
-                    "finish_reason": trace::finish_reason_label(&completion.finish_reason),
-                    "final_tool_call_count": completion.tool_calls.len(),
-                    "observed_tool_call_count": completion.tool_call_observation.observed,
-                    "malformed_tool_call_count": completion.tool_call_observation.malformed.len()
-                }),
-            );
-            let message = if completion.finish_reason == FinishReason::Cancelled {
-                "Tool call cancelled before it finalized."
-            } else {
-                "Provider response ended before this tool call finalized."
-            };
-            finalize_matching_provisional_tools(
-                sender,
-                request_id.clone(),
-                &mut provisional_tools,
-                &completion.tool_calls,
-                &trace,
-            )
-            .await?;
-            fail_open_provisional_tools(
-                sender,
-                request_id.clone(),
-                &mut provisional_tools,
-                &trace,
-                message,
-            )
-            .await?;
-            persist_recorded_tool_results(
-                sender,
-                request_id.clone(),
-                chat_id,
-                assistant_message_id,
-                &recorded_tool_results,
-                &trace,
-            )
-            .await?;
-            Ok(Ok(StreamedAssistant {
-                completion,
-                usage,
-                reasoning_content,
-            }))
-        }
-        Err(error) => {
-            trace.error(
-                "assistant.finalized",
-                "failed",
-                json!({ "error_code": error.code() }),
-            );
-            fail_open_provisional_tools(
-                sender,
-                request_id.clone(),
-                &mut provisional_tools,
-                &trace,
-                "Provider stream ended before this tool call finalized.",
-            )
-            .await?;
-            // The provider already executed these tools — possibly changing
-            // the project — so their records must survive a failed turn even
-            // though the replay layer excludes a failed assistant message.
-            persist_recorded_tool_results(
-                sender,
-                request_id.clone(),
-                chat_id,
-                assistant_message_id,
-                &recorded_tool_results,
-                &trace,
-            )
-            .await?;
-            Ok(Err(AssistantStreamError {
-                error,
-                emitted_output,
-            }))
+        match completion {
+            Ok(completion) => {
+                trace.event_status(
+                    "assistant.finalized",
+                    "ok",
+                    json!({
+                        "content_chars": completion.content.chars().count(),
+                        "finish_reason": trace::finish_reason_label(&completion.finish_reason),
+                        "final_tool_call_count": completion.tool_calls.len(),
+                        "observed_tool_call_count": completion.tool_call_observation.observed,
+                        "malformed_tool_call_count": completion.tool_call_observation.malformed.len()
+                    }),
+                );
+                let message = if completion.finish_reason == FinishReason::Cancelled {
+                    "Tool call cancelled before it finalized."
+                } else {
+                    "Provider response ended before this tool call finalized."
+                };
+                finalize_matching_provisional_tools(
+                    sender,
+                    request_id.clone(),
+                    &mut provisional_tools,
+                    &completion.tool_calls,
+                    &trace,
+                )
+                .await?;
+                fail_open_provisional_tools(
+                    sender,
+                    request_id.clone(),
+                    &mut provisional_tools,
+                    &trace,
+                    message,
+                )
+                .await?;
+                Ok(Ok(StreamedAssistant {
+                    completion,
+                    usage,
+                    reasoning_content,
+                }))
+            }
+            Err(error) => {
+                trace.error(
+                    "assistant.finalized",
+                    "failed",
+                    json!({ "error_code": error.code() }),
+                );
+                fail_open_provisional_tools(
+                    sender,
+                    request_id.clone(),
+                    &mut provisional_tools,
+                    &trace,
+                    "Provider stream ended before this tool call finalized.",
+                )
+                .await?;
+                Ok(Err(AssistantStreamError {
+                    error,
+                    emitted_output,
+                    persisted_tool_calls: 0,
+                }))
+            }
         }
     }
+    .await;
+    if stream_outcome.is_err() {
+        collect_disconnected_results(&mut item_rx, &mut recorded_tool_results);
+    }
+    let persisted_tool_results = persist_recorded_tool_results(
+        sender,
+        request_id.clone(),
+        chat_id,
+        assistant_message_id,
+        &recorded_tool_results,
+        &trace,
+    )
+    .await;
+    if let Ok(Err(stream_error)) = &mut stream_outcome {
+        stream_error.persisted_tool_calls = persisted_tool_results;
+    }
+    stream_outcome
 }
 
 enum StreamStep {
     Item(StreamItem),
     Completion(Result<ChatCompletion, LlmError>),
+}
+
+// Stop accepting work after a UI send fails, but retain results already
+// delivered by the provider. Dropping queued approvals closes their responder.
+fn collect_disconnected_results(
+    item_rx: &mut mpsc::UnboundedReceiver<StreamItem>,
+    results: &mut Vec<RecordedToolResult>,
+) {
+    item_rx.close();
+    while let Ok(item) = item_rx.try_recv() {
+        if let StreamItem::FunctionCallResult {
+            id,
+            name,
+            arguments,
+            status,
+            content,
+            raw,
+        } = item
+        {
+            results.push(RecordedToolResult {
+                id,
+                name,
+                arguments,
+                status,
+                content,
+                raw,
+            });
+        }
+    }
 }
 
 // The provider wrapper resolves the completion only after every item callback
@@ -434,9 +469,10 @@ fn provider_task_ended_error() -> LlmError {
     }
 }
 
-// Persist provider-executed tool results once the provider stream settled,
-// using the same store calls as Fennara-executed tools. Runs for completed
-// and failed turns alike. tool_calls_json only references results that
+// Persist provider-executed tool results using the same store calls as
+// Fennara-executed tools, and report how many landed. Reporting problems to
+// the UI is best-effort: a disconnected sink must not stop the remaining
+// results from being stored. tool_calls_json only references results that
 // actually landed, because replay drops an assistant group with missing
 // results.
 async fn persist_recorded_tool_results<S>(
@@ -446,7 +482,7 @@ async fn persist_recorded_tool_results<S>(
     assistant_message_id: &str,
     results: &[RecordedToolResult],
     trace: &trace::TraceRecorder,
-) -> Result<(), S::Error>
+) -> usize
 where
     S: Sink<Message> + Unpin,
     S::Error: std::fmt::Debug,
@@ -511,12 +547,13 @@ where
                         "message": error.as_str()
                     }),
                 );
-                send_error(sender, request_id.clone(), "chat_store_failed", &error).await?;
+                let _ = send_error(sender, request_id.clone(), "chat_store_failed", &error).await;
             }
         }
     }
-    if !persisted_tool_calls.is_empty() {
-        if let Err(error) = store::attach_tool_calls_to_message(
+    let persisted_count = persisted_tool_calls.len();
+    if persisted_count > 0 {
+        if let Err(error) = store::finish_provider_tool_round(
             assistant_message_id,
             &Value::Array(persisted_tool_calls),
         ) {
@@ -525,10 +562,11 @@ where
                 "failed",
                 json!({ "message": error.as_str() }),
             );
-            send_error(sender, request_id, "chat_store_failed", &error).await?;
+            let _ = send_error(sender, request_id, "chat_store_failed", &error).await;
+            return 0;
         }
     }
-    Ok(())
+    persisted_count
 }
 
 // Reuse the existing session-bound approval UI. A disconnected UI, timeout or
@@ -788,6 +826,47 @@ fn tool_call_arguments(call: &Value) -> Option<&str> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn failed_ui_send_keeps_queued_results_and_closes_provider_channel() {
+        let (item_tx, mut item_rx) = mpsc::unbounded_channel();
+        item_tx
+            .send(StreamItem::Status {
+                message: "working".into(),
+            })
+            .unwrap();
+        for id in ["first", "second"] {
+            item_tx
+                .send(StreamItem::FunctionCallResult {
+                    id: id.into(),
+                    name: "project_settings".into(),
+                    arguments: json!({"action":"get"}),
+                    status: "done".into(),
+                    content: "saved result".into(),
+                    raw: json!({}),
+                })
+                .unwrap();
+        }
+        let mut sink = Box::pin(futures_util::sink::unfold((), |(), _: Message| async {
+            Err::<(), _>("disconnected")
+        }));
+        assert!(
+            send_json(&mut sink, json!({"type":"chat_item_update"}))
+                .await
+                .is_err()
+        );
+        let mut results = Vec::new();
+        collect_disconnected_results(&mut item_rx, &mut results);
+        assert_eq!(
+            results
+                .iter()
+                .map(|result| result.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["first", "second"]
+        );
+        assert!(item_tx.is_closed());
+        assert!(item_rx.try_recv().is_err());
+    }
+
     fn chat_completion_fixture() -> ChatCompletion {
         ChatCompletion {
             content: "done".to_string(),
@@ -805,10 +884,14 @@ mod tests {
         let (item_tx, mut item_rx) = mpsc::unbounded_channel::<StreamItem>();
         let (done_tx, mut done_rx) = oneshot::channel::<Result<ChatCompletion, LlmError>>();
         item_tx
-            .send(StreamItem::Status { message: "one".into() })
+            .send(StreamItem::Status {
+                message: "one".into(),
+            })
             .unwrap();
         item_tx
-            .send(StreamItem::Status { message: "two".into() })
+            .send(StreamItem::Status {
+                message: "two".into(),
+            })
             .unwrap();
         drop(item_tx);
         done_tx.send(Ok(chat_completion_fixture())).unwrap();

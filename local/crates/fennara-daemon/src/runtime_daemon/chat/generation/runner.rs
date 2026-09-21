@@ -620,6 +620,7 @@ where
                     }
                     recovery_span.finish("unavailable", json!({}));
                 }
+                let persisted_tool_calls = stream_error.persisted_tool_calls;
                 let error = stream_error.error;
                 let user_error_message =
                     generation_failure_user_message(&error, overflow_recovery_retry_sent);
@@ -652,7 +653,33 @@ where
                 });
                 let _ =
                     store::finish_generation(&current_generation.id, "failed", Some(&error_json));
-                let _ = store::fail_assistant_message(&current_assistant.id, &error_text);
+                if persisted_tool_calls > 0 {
+                    // Publisher completed the durable tool group. Keep that
+                    // group replayable and put the later failure on a new row,
+                    // as the native tool loop does for its continuation.
+                    match store::insert_assistant_placeholder_with_generation(
+                        &chat_id,
+                        &model,
+                        &reasoning_effort,
+                        &settings.custom_providers,
+                    ) {
+                        Ok((failed_message, failed_generation)) => {
+                            let _ = store::finish_generation(
+                                &failed_generation.id,
+                                "failed",
+                                Some(&error_json),
+                            );
+                            let _ = store::fail_assistant_message(&failed_message.id, &error_text);
+                            current_assistant = failed_message;
+                        }
+                        Err(error) => {
+                            return send_error(sender, request_id, "chat_store_failed", &error)
+                                .await;
+                        }
+                    }
+                } else {
+                    let _ = store::fail_assistant_message(&current_assistant.id, &error_text);
+                }
                 current_trace.error(
                     "generation.failed",
                     "failed",
@@ -676,6 +703,7 @@ where
                         "request_id": request_id.clone(),
                         "item": {
                             "type": "message",
+                            "id": current_assistant.id,
                             "content": error_text
                         }
                     }),

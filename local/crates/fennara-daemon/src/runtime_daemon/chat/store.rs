@@ -636,15 +636,17 @@ fn cancel_turn_on_connection(
 // them so provider replay keeps the pair together. Only reference tool call ids
 // whose results were stored: replay drops an assistant group when a referenced
 // tool call has no following result.
-pub(crate) fn attach_tool_calls_to_message(
+// Complete the tool round with the pairing in one update, even if the UI has
+// disconnected. Any later provider failure belongs to a separate assistant.
+pub(crate) fn finish_provider_tool_round(
     message_id: &str,
     tool_calls: &Value,
 ) -> Result<(), String> {
     let conn = connection()?;
-    attach_tool_calls_to_message_on_connection(&conn, message_id, tool_calls)
+    finish_provider_tool_round_on_connection(&conn, message_id, tool_calls)
 }
 
-pub(crate) fn attach_tool_calls_to_message_on_connection(
+pub(crate) fn finish_provider_tool_round_on_connection(
     conn: &Connection,
     message_id: &str,
     tool_calls: &Value,
@@ -652,7 +654,7 @@ pub(crate) fn attach_tool_calls_to_message_on_connection(
     let tool_calls_json = serde_json::to_string(tool_calls).map_err(|e| e.to_string())?;
     let updated = conn
         .execute(
-            "UPDATE chat_messages SET tool_calls_json = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            "UPDATE chat_messages SET tool_calls_json = ?2, status = 'done', updated_at_ms = ?3 WHERE id = ?1 AND role = 'assistant'",
             params![message_id, tool_calls_json, now_ms()],
         )
         .map_err(to_store_error)?;
