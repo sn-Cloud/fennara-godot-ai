@@ -13,6 +13,19 @@ Read this file before changing the repository.
 - Keep platform-specific native code behind explicit platform files or small bridge boundaries. Windows, macOS, Linux, and unsupported fallback behavior should remain obvious from filenames and call sites.
 - Do not bundle heavyweight browser runtimes into the Godot addon. Linux CEF is a shared local webview runtime installed under the user's Fennara app-data directory, not copied into every `res://addons/fennara/`.
 
+## Repository Layout
+
+Fennara is a game-agnostic Godot AI addon: an in-editor chat webview, an external MCP server, and a shared local daemon, installed and updated by a CLI.
+
+- `local/` is the Rust workspace: `fennara-cli`, `fennara-daemon`, `fennara-project-identity`, `fennara-mcp`, plus shared tool schemas in `local/schemas/tools/` and install templates in `local/templates/`.
+- `fennara-cpp/` is the C++ GDExtension (SCons build, `godot-cpp/` submodule) for Godot editor integration, tools, and the webview host.
+- `ui/chat/` is the buildless web chat UI source (plain HTML/CSS/JS, no package.json; vendored libraries under `ui/chat/vendor/`).
+- `runtime/` holds the GDScript runtime helpers used by `runtime_session` and `runtime_script`.
+- `godot_demo/addons/fennara/` is the installable addon payload; `godot_demo/tests/` holds headless Godot regression tests.
+- `scripts/` holds Node automation for versioning, packaging, release validation, and doc i18n.
+
+Use `docs/repo-map.md` as the detailed "where to change things" index before starting.
+
 ## Source Of Truth
 
 - `README.md` is the human-facing project overview.
@@ -24,6 +37,14 @@ Read this file before changing the repository.
 - `local/templates/` contains project guidance written by `fennara install` and refreshed by `fennara update`.
 - `ui/chat/` contains the source web chat UI. `godot_demo/addons/fennara/dist/` is the synced addon copy.
 - `runtime/` contains the source Godot runtime helper scripts. `godot_demo/addons/fennara/runtime/` is the synced addon copy.
+
+## Build And Test Commands
+
+- Rust workspace, run from `local/`: `cargo test --locked` and `cargo build --release --locked`.
+- Node tests: `node --test scripts/tests/<name>.test.mjs` from the repo root; each `*.test.mjs` is standalone.
+- Version sync: `node scripts/check-version.mjs`.
+- Docs i18n validation: `node scripts/sync-doc-navigation.mjs --check` then `node scripts/check-doc-i18n.mjs`.
+- GDExtension, run from `fennara-cpp/`: `scons platform=windows target=editor` (same for `macos`/`linux`; Linux CI first prepares the pinned CEF SDK via `node scripts/prepare-linux-cef-sdk.mjs` — see `.github/workflows/gdextension-build.yml`).
 
 ## Generated And Packaged Files
 
