@@ -120,15 +120,25 @@ enforcement. Fennara does not read or store ChatGPT tokens.
 Codex streamed reply text is retained in the final completion used to save and
 refresh chat history.
 
-The default Fennara permission mode maps to Codex `thread/start` sandbox mode
-`workspace-write`. Choosing Fennara **Full access** maps it to `danger-full-access`.
-These request enum values differ from the camel-case sandbox policy types in responses.
-Codex threads use `on-request` approval policy. Command, file-change, permission,
-and MCP tool approval requests are shown through Fennara's existing Approve/Deny
-controls, scoped to the originating Godot session. Declining, cancelling, or
-timing out does not grant permission. Full access changes the sandbox scope;
-explicit approvals requested by Codex or an MCP server still require a decision.
-Generic MCP input forms and authentication URL flows are not treated as tool approvals.
+Codex chat starts the matching bundled MCP runtime as `fennara_chat`, with an
+explicit `--project-path` binding. This thread-local configuration disables the
+legacy `fennara` MCP entry for this chat only; it never changes external clients'
+configuration or the global MCP Target.
+
+Fennara tool calls use the same `PermissionPolicy` as the other built-in chat
+providers: read-only operations (including `fennara_status`) run directly;
+project writes and execution ask in **Ask** mode and run directly in **Full
+access**. Argument-dependent operations such as `project_settings` and
+`runtime_session` are classified by action. Unsupported tools/actions remain
+denied. Automatic decisions require a matching active call on the plugin-owned
+MCP server, including its thread, turn, tool name, and arguments.
+
+Native Codex operations use `read-only` / `untrusted` in Ask mode and
+`workspace-write` / `on-request` in Full access. Full access does not grant
+unrestricted host access. Other providers' permission rules are unchanged.
+External MCP services, unmatched requests and additional native permissions
+still use the existing session-bound Approve/Deny controls. Generic MCP input
+forms and authentication URL flows are not treated as tool approvals.
 
 Codex sessions can use the existing Fennara MCP tools for Godot editor and
 runtime operations. This does not install or replace Fennara MCP with Godot MCP

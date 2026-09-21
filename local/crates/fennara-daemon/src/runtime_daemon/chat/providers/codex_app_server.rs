@@ -19,6 +19,9 @@ use super::{
     request::LlmRequest,
     stream::{FinishReason, StreamEvent, Usage},
 };
+use crate::runtime_daemon::permissions::{
+    ApprovalMode, PermissionDecision, PermissionPolicy, clean_approval_mode,
+};
 
 const PROVIDER_NAME: &str = "Codex";
 const INIT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -292,7 +295,7 @@ where
     }
     thread_params.insert(
         "approvalPolicy".to_string(),
-        Value::String("on-request".to_string()),
+        Value::String(thread_approval_policy(&request.approval_mode).to_string()),
     );
     thread_params.insert(
         "sandbox".to_string(),
@@ -310,6 +313,31 @@ where
     let effort = request.model.request.generation.reasoning_effort.as_deref();
     let effort = select_codex_effort(selected, effort)?;
     thread_params.insert("model".to_string(), Value::String(selected.model.clone()));
+    // Bind the plugin-owned MCP process to this chat's project, never the
+    // external clients' global MCP Target. Overrides live only in this thread.
+    let fennara_bound = if let Some(cwd) = request.cwd.as_deref() {
+        let runtime = std::env::current_exe()
+            .ok()
+            .and_then(|path| {
+                path.parent().map(|parent| {
+                    parent.join(if cfg!(windows) {
+                        "fennara-mcp-runtime.exe"
+                    } else {
+                        "fennara-mcp-runtime"
+                    })
+                })
+            })
+            .filter(|path| path.is_file())
+            .ok_or_else(|| LlmError::Config {
+                message:
+                    "The matching Fennara MCP runtime is missing. Reinstall the complete addon."
+                        .into(),
+            })?;
+        thread_params.insert("config".into(), fennara_thread_config(cwd, &runtime)?);
+        true
+    } else {
+        false
+    };
 
     let thread_result = connection
         .request("thread/start", Value::Object(thread_params), RPC_TIMEOUT)
@@ -336,16 +364,54 @@ where
 
     let mut emitted_text = false;
     let mut latest_usage: Option<Usage> = None;
+    let mut mcp_calls = std::collections::HashMap::new();
     loop {
         let message = connection.read_message().await?;
+        track_mcp_call(&mut mcp_calls, &message, &thread_id);
         if let Some((accepted_result, declined_result)) = approval_responses(&message, &thread_id) {
+            if fennara_bound {
+                if let Some((tool, arguments)) = fennara_approval_call(&mcp_calls, &message) {
+                    let decision = fennara_decision(&request.approval_mode, tool, arguments);
+                    match decision {
+                        PermissionDecision::Allow | PermissionDecision::Deny { .. } => {
+                            let allow = matches!(decision, PermissionDecision::Allow);
+                            // The publisher checks cancellation on each event;
+                            // do that before granting even a pre-authorized call.
+                            if !on_event(StreamEvent::Status {
+                                message: format!("Fennara: {tool}"),
+                            })
+                            .await?
+                            {
+                                connection
+                                    .write_json(
+                                        &json!({"id":message["id"],"result":declined_result}),
+                                    )
+                                    .await?;
+                                connection.interrupt_turn(&thread_id).await;
+                                connection.shutdown().await;
+                                return Ok(());
+                            }
+                            connection.write_json(&json!({"id":message["id"],"result": if allow {accepted_result} else {declined_result}})).await?;
+                            continue;
+                        }
+                        PermissionDecision::AskUser { .. } => {}
+                    }
+                }
+            }
             let (tx, rx) = tokio::sync::oneshot::channel();
+            let tool_details = fennara_bound
+                .then(|| fennara_approval_call(&mcp_calls, &message))
+                .flatten();
             let keep_going = on_event(StreamEvent::Approval(super::types::ProviderApproval {
-                name: message["method"]
-                    .as_str()
-                    .unwrap_or("Codex approval")
+                name: tool_details
+                    .map(|(name, _)| name)
+                    .unwrap_or_else(|| message["method"].as_str().unwrap_or("Codex approval"))
                     .to_string(),
                 details: message["params"].clone(),
+                permission: tool_details.map(|(name, args)| {
+                    PermissionPolicy::new(clean_approval_mode(&request.approval_mode))
+                        .evaluate_tool(name, args)
+                }),
                 responder: std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx))),
             }))
             .await?;
@@ -1004,6 +1070,97 @@ fn resolve_codex_command() -> Option<PathBuf> {
     None
 }
 
+const CHAT_MCP_SERVER: &str = "fennara_chat";
+
+// Reuse built-in chat policy, adding only the MCP connection status operation.
+// Unknown tools/actions remain denied even in Full access.
+fn fennara_decision(mode: &str, tool: &str, arguments: &Value) -> PermissionDecision {
+    if tool == "fennara_status" {
+        return PermissionDecision::Allow;
+    }
+    PermissionPolicy::new(clean_approval_mode(mode)).decide_tool(tool, arguments)
+}
+
+// The server is our matching runtime with an explicit immutable project route.
+// Prompt at the protocol boundary, then evaluate real arguments with the same
+// policy as built-in chat. Do not change any user's on-disk MCP configuration.
+fn fennara_thread_config(cwd: &str, runtime: &Path) -> Result<Value, LlmError> {
+    let project =
+        fennara_project_identity::ProjectRoot::resolve_absolute(std::ffi::OsStr::new(cwd))
+            .map_err(|error| LlmError::Config {
+                message: format!("Invalid Fennara project: {error}"),
+            })?;
+    let root = project.as_protocol_str();
+    let mut names = super::super::tools::allowed_tool_names().to_vec();
+    names.push("fennara_status");
+    let tools: Map<String, Value> = names
+        .iter()
+        .map(|name| ((*name).to_string(), json!({"approval_mode":"prompt"})))
+        .collect();
+    Ok(json!({
+        "approvals_reviewer": "user",
+        "mcp_servers.fennara.enabled": false,
+        "mcp_servers.fennara_chat": {
+            "command":runtime, "args":["--project-path",root], "cwd":root,
+            "enabled":true,"required":true,"startup_timeout_sec":30,"tool_timeout_sec":300,
+            "enabled_tools":names,"default_tools_approval_mode":"prompt","tools":tools
+        }
+    }))
+}
+
+// Track server-provided structured call identity. Approval prose alone never
+// authorizes a tool, and completed calls cannot authorize subsequent prompts.
+fn track_mcp_call(
+    calls: &mut std::collections::HashMap<String, Value>,
+    message: &Value,
+    thread: &str,
+) {
+    let params = &message["params"];
+    if params["threadId"].as_str() != Some(thread) {
+        return;
+    }
+    let item = &params["item"];
+    if item["type"] != "mcpToolCall" {
+        return;
+    }
+    let Some(id) = item["id"].as_str() else {
+        return;
+    };
+    if message["method"] == "item/started" {
+        calls.insert(id.to_string(), params.clone());
+    } else if message["method"] == "item/completed" {
+        calls.remove(id);
+    }
+}
+
+// Correlate the official tool-approval envelope with one live call, including
+// server, turn, name and exact arguments. Unmatched/ambiguous forms stay manual.
+fn fennara_approval_call<'a>(
+    calls: &'a std::collections::HashMap<String, Value>,
+    message: &Value,
+) -> Option<(&'a str, &'a Value)> {
+    let params = &message["params"];
+    if message["method"] != "mcpServer/elicitation/request"
+        || params["serverName"] != CHAT_MCP_SERVER
+    {
+        return None;
+    }
+    let arguments = params.pointer("/_meta/tool_params")?;
+    let mut matching = calls.values().filter_map(|call| {
+        let item = &call["item"];
+        let name = item["tool"].as_str()?;
+        let expected = format!("Allow the {CHAT_MCP_SERVER} MCP server to run tool \"{name}\"?");
+        (call["threadId"] == params["threadId"]
+            && call["turnId"] == params["turnId"]
+            && item["server"] == CHAT_MCP_SERVER
+            && &item["arguments"] == arguments
+            && params["message"].as_str() == Some(expected.as_str()))
+        .then_some((name, &item["arguments"]))
+    });
+    let first = matching.next()?;
+    matching.next().is_none().then_some(first)
+}
+
 // Translate only explicit operation approvals belonging to this thread. Generic
 // MCP forms can contain sensitive input and must not be accepted as approvals.
 fn approval_responses(message: &Value, thread_id: &str) -> Option<(Value, Value)> {
@@ -1050,12 +1207,23 @@ fn approval_responses(message: &Value, thread_id: &str) -> Option<(Value, Value)
 }
 
 // thread/start uses SandboxMode, not the camel-case response discriminator.
-// Only explicit full access should disable the workspace sandbox.
+// Full access grants project operations, not unrestricted host filesystem access.
+// Ask also prevents native Codex edits from bypassing Fennara's write approvals.
 fn thread_sandbox_mode(approval_mode: &str) -> &'static str {
-    if approval_mode == "full_access" {
-        "danger-full-access"
-    } else {
+    if clean_approval_mode(approval_mode) == ApprovalMode::FullAccess {
         "workspace-write"
+    } else {
+        "read-only"
+    }
+}
+
+// Native commands use the same selected mode; MCP arguments are classified
+// separately through Fennara's policy before any automatic decision.
+fn thread_approval_policy(mode: &str) -> &'static str {
+    if clean_approval_mode(mode) == ApprovalMode::FullAccess {
+        "on-request"
+    } else {
+        "untrusted"
     }
 }
 
@@ -1066,6 +1234,183 @@ fn is_executable_candidate(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fennara_policy_matches_builtin_chat_for_every_exposed_tool() {
+        for mode in ["ask", "full_access"] {
+            let policy = PermissionPolicy::new(clean_approval_mode(mode));
+            for tool in super::super::super::tools::allowed_tool_names() {
+                for args in [
+                    json!({}),
+                    json!({"action":"get"}),
+                    json!({"action":"set"}),
+                    json!({"action":"status"}),
+                    json!({"action":"start"}),
+                    json!({"action":"unknown"}),
+                ] {
+                    assert_eq!(
+                        fennara_decision(mode, tool, &args),
+                        policy.decide_tool(tool, &args)
+                    );
+                }
+            }
+            assert_eq!(
+                fennara_decision(mode, "fennara_status", &json!({})),
+                PermissionDecision::Allow
+            );
+            assert!(matches!(
+                fennara_decision(mode, "unknown_tool", &json!({})),
+                PermissionDecision::Deny { .. }
+            ));
+        }
+        assert_eq!(thread_sandbox_mode("ask"), "read-only");
+        assert_eq!(thread_sandbox_mode("full_access"), "workspace-write");
+    }
+
+    #[test]
+    fn automatic_decisions_require_exact_live_fennara_call() {
+        let started = json!({"method":"item/started","params":{"threadId":"t","turnId":"turn","item":{
+            "id":"call","type":"mcpToolCall","server":CHAT_MCP_SERVER,"tool":"project_settings","arguments":{"action":"get"}
+        }}});
+        let approval = json!({"method":"mcpServer/elicitation/request","params":{"threadId":"t","turnId":"turn",
+            "serverName":CHAT_MCP_SERVER,"message":"Allow the fennara_chat MCP server to run tool \"project_settings\"?",
+            "_meta":{"tool_params":{"action":"get"}}
+        }});
+        let mut calls = std::collections::HashMap::new();
+        track_mcp_call(&mut calls, &started, "t");
+        assert!(fennara_approval_call(&calls, &approval).is_some());
+        for (key, value) in [
+            ("threadId", json!("other")),
+            ("turnId", json!("other")),
+            ("serverName", json!("external")),
+            ("message", json!("Allow something else")),
+            ("_meta", json!({"tool_params":{"action":"set"}})),
+        ] {
+            let mut changed = approval.clone();
+            changed["params"][key] = value;
+            assert!(fennara_approval_call(&calls, &changed).is_none());
+        }
+        calls.insert("duplicate".into(), started["params"].clone());
+        assert!(fennara_approval_call(&calls, &approval).is_none());
+        calls.remove("duplicate");
+        let mut completed = started;
+        completed["method"] = json!("item/completed");
+        track_mcp_call(&mut calls, &completed, "t");
+        assert!(fennara_approval_call(&calls, &approval).is_none());
+    }
+
+    #[test]
+    fn chat_mcp_config_binds_project_and_prompts_every_supported_tool() {
+        let folder = std::env::temp_dir().join(format!("fennara-config-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("project.godot"), "config_version=5\n").unwrap();
+        let runtime = folder.join("matching-runtime");
+        let config = fennara_thread_config(folder.to_str().unwrap(), &runtime).unwrap();
+        let server = &config["mcp_servers.fennara_chat"];
+        assert_eq!(server["command"], json!(runtime));
+        assert_eq!(server["args"][0], "--project-path");
+        assert_eq!(server["args"][1], server["cwd"]);
+        assert_eq!(config["mcp_servers.fennara.enabled"], false);
+        assert!(config.get("mcp_servers.external.enabled").is_none());
+        for name in server["enabled_tools"].as_array().unwrap() {
+            assert_eq!(
+                server["tools"][name.as_str().unwrap()]["approval_mode"],
+                "prompt"
+            );
+        }
+        assert!(fennara_thread_config("relative-project", &runtime).is_err());
+    }
+
+    #[tokio::test]
+    #[ignore = "requires Codex login and Node.js; sends three short model requests"]
+    async fn live_fennara_policy_routes_actual_mcp_calls() {
+        let folder = std::env::temp_dir().join(format!("fennara-policy-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("project.godot"), "config_version=5\n").unwrap();
+        let script = folder.join("fixture.cjs");
+        std::fs::write(&script, r#"
+require('node:readline').createInterface({input:process.stdin}).on('line', line => {
+ const m=JSON.parse(line); if(m.id===undefined)return; let result={};
+ if(m.method==='initialize') result={protocolVersion:'2024-11-05',capabilities:{tools:{}},serverInfo:{name:'fennara-policy-fixture',version:'1'}};
+ if(m.method==='tools/list') result={tools:['fennara_status','write_or_update_file'].map(name=>({name,description:'Inert policy test. Returns marker; no files are read or written.',inputSchema:{type:'object',properties:{}},annotations:{readOnlyHint:false,destructiveHint:true}}))};
+ if(m.method==='tools/call') result={content:[{type:'text',text:'POLICY_PROBE_EXECUTED'}],isError:false};
+ console.log(JSON.stringify({jsonrpc:'2.0',id:m.id,result}));
+});"#).unwrap();
+        for (mode, tool, expected) in [
+            ("ask", "fennara_status", true),
+            ("ask", "write_or_update_file", false),
+            ("full_access", "write_or_update_file", true),
+        ] {
+            let mut config =
+                fennara_thread_config(folder.to_str().unwrap(), Path::new("node")).unwrap();
+            config["mcp_servers.fennara_chat"]["args"] = json!([script]);
+            let mut connection = CodexConnection::spawn().await.unwrap();
+            let thread = connection.request("thread/start", json!({"ephemeral":true,"model":"gpt-6-astra","approvalPolicy":thread_approval_policy(mode),"sandbox":thread_sandbox_mode(mode),"cwd":folder,"config":config}),RPC_TIMEOUT).await.unwrap();
+            let id = thread["thread"]["id"].as_str().unwrap();
+            let prompt = format!(
+                "Call fennara_chat MCP tool {tool} once with empty arguments. This is an inert test. Do not call other tools or read files. If denied, stop without retrying. Briefly report result."
+            );
+            connection
+                .request(
+                    "turn/start",
+                    json!({"threadId":id,"effort":"low","input":[{"type":"text","text":prompt}]}),
+                    RPC_TIMEOUT,
+                )
+                .await
+                .unwrap();
+            let mut calls = std::collections::HashMap::new();
+            timeout(Duration::from_secs(120), async {
+                let mut reviewed = false;
+                let mut executed = false;
+                loop {
+                    let message = connection.read_message().await.unwrap();
+                    track_mcp_call(&mut calls, &message, id);
+                    if let Some((allow, deny)) = approval_responses(&message, id) {
+                        let (name,args) = fennara_approval_call(&calls, &message).unwrap_or_else(|| panic!("Unmatched approval: {message}; active: {calls:?}"));
+                        assert_eq!(name, tool);
+                        let decision = fennara_decision(mode, name, args);
+                        assert_eq!(matches!(decision, PermissionDecision::Allow), expected);
+                        if !expected { assert!(matches!(decision, PermissionDecision::AskUser{..})); }
+                        // The fixture user declines writes in Ask mode.
+                        connection.write_json(&json!({"id":message["id"],"result":if expected {allow} else {deny}})).await.unwrap();
+                        reviewed=true;
+                    } else if message["method"] == "item/completed" && message["params"]["item"]["type"] == "mcpToolCall" {
+                        executed |= message.to_string().contains("POLICY_PROBE_EXECUTED");
+                    } else if message["method"] == "turn/completed" {
+                        assert!(reviewed, "No approval evaluated: {message}");
+                        assert_eq!(executed, expected);
+                        break;
+                    }
+                }
+            }).await.unwrap();
+            println!("{mode}: {tool}: executed={expected}");
+            connection.shutdown().await;
+        }
+    }
+
+    // Verify the real packaged runtime honors the explicit route, without
+    // opening Godot or changing any editor's global MCP target.
+    #[tokio::test]
+    #[ignore = "requires Codex and FENNARA_TEST_MCP_RUNTIME; no model request"]
+    async fn live_fennara_mcp_binding_uses_chat_project() {
+        let runtime =
+            PathBuf::from(std::env::var_os("FENNARA_TEST_MCP_RUNTIME").expect("MCP runtime path"));
+        let folder = std::env::temp_dir().join(format!("fennara-binding-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(folder.join("project.godot"), "config_version=5\n").unwrap();
+        let config = fennara_thread_config(folder.to_str().unwrap(), &runtime).unwrap();
+        let mut connection = CodexConnection::spawn().await.unwrap();
+        let thread = connection.request("thread/start", json!({"ephemeral":true,"approvalPolicy":"on-request","sandbox":"read-only","cwd":folder,"config":config}),RPC_TIMEOUT).await.unwrap();
+        let result = connection.request("mcpServer/tool/call",json!({"threadId":thread["thread"]["id"],"server":CHAT_MCP_SERVER,"tool":"fennara_status","arguments":{}}),RPC_TIMEOUT).await.unwrap();
+        let text = result["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("Routing mode: bound"), "{text}");
+        assert!(
+            text.contains(folder.file_name().unwrap().to_str().unwrap()),
+            "{text}"
+        );
+        println!("Real Fennara MCP status confirms the isolated chat project binding.");
+        connection.shutdown().await;
+    }
 
     #[test]
     fn approval_translation_rejects_other_threads_and_input_forms() {
@@ -1250,9 +1595,9 @@ rl.on('line', line => {
             assert_eq!(
                 result.pointer("/sandbox/type").and_then(Value::as_str),
                 Some(if mode == "full_access" {
-                    "dangerFullAccess"
-                } else {
                     "workspaceWrite"
+                } else {
+                    "readOnly"
                 })
             );
             println!("{}: {} accepted", model.model, thread_sandbox_mode(mode));

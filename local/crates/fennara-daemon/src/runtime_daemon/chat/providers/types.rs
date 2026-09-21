@@ -348,6 +348,7 @@ pub(crate) enum StreamItem {
 pub(crate) struct ProviderApproval {
     pub(crate) name: String,
     pub(crate) details: Value,
+    pub(crate) permission: Option<crate::runtime_daemon::permissions::ToolPermission>,
     pub(crate) responder:
         std::sync::Arc<tokio::sync::Mutex<Option<tokio::sync::oneshot::Sender<bool>>>>,
 }

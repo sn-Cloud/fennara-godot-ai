@@ -373,11 +373,25 @@ where
         session_id: session_id.to_string(),
         tool_call_id: id.clone(),
         tool_name: approval.name.clone(),
-        tool_kind: ToolPermissionKind::ExecutesProject,
-        tool_kind_label: "Codex operation requiring approval",
+        tool_kind: approval
+            .permission
+            .as_ref()
+            .map(|p| p.kind)
+            .unwrap_or(ToolPermissionKind::ExecutesProject),
+        tool_kind_label: approval
+            .permission
+            .as_ref()
+            .map(|p| p.kind.label())
+            .unwrap_or("Codex operation requiring approval"),
         approval_mode: ApprovalMode::Ask,
         status: ToolApprovalStatus::PendingApproval,
-        reason: "Codex requires your approval before this operation can run.".to_string(),
+        reason: approval
+            .permission
+            .as_ref()
+            .map(|p| p.reason.clone())
+            .unwrap_or_else(|| {
+                "Codex requires your approval before this operation can run.".to_string()
+            }),
         summary: approval
             .details
             .get("message")
@@ -586,6 +600,7 @@ mod tests {
             let approval = super::super::super::providers::ProviderApproval {
                 name: "mcpServer/elicitation/request".into(),
                 details: json!({"message":"Run fixture tool?"}),
+                permission: None,
                 responder: std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx))),
             };
             let mut sink = Box::pin(futures_util::sink::unfold(
