@@ -336,6 +336,16 @@ pub(crate) enum StreamItem {
         arguments: String,
         message: String,
     },
+    // Terminal state of a provider-executed tool call, recorded and rendered
+    // like a Fennara-executed tool result.
+    FunctionCallResult {
+        id: String,
+        name: String,
+        arguments: Value,
+        status: String,
+        content: String,
+        raw: Value,
+    },
     Status {
         message: String,
     },
@@ -347,6 +357,9 @@ pub(crate) enum StreamItem {
 #[derive(Clone, Debug)]
 pub(crate) struct ProviderApproval {
     pub(crate) name: String,
+    // Provider-side tool call id. When present the approval card and the tool
+    // result card share one id, matching Fennara's native tool card flow.
+    pub(crate) item_id: Option<String>,
     pub(crate) details: Value,
     pub(crate) permission: Option<crate::runtime_daemon::permissions::ToolPermission>,
     pub(crate) responder:

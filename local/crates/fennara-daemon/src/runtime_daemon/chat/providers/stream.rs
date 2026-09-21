@@ -87,6 +87,17 @@ pub(crate) enum StreamEvent {
         message: String,
         raw: Option<String>,
     },
+    // A tool that the provider already executed itself. Flows through the same
+    // card, trace, and transcript pipeline as Fennara-executed tools without
+    // re-entering the execution loop.
+    ToolCallResult {
+        id: String,
+        name: String,
+        arguments: Value,
+        status: String,
+        content: String,
+        raw: Value,
+    },
     Status {
         message: String,
     },

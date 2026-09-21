@@ -370,7 +370,7 @@ where
         track_mcp_call(&mut mcp_calls, &message, &thread_id);
         if let Some((accepted_result, declined_result)) = approval_responses(&message, &thread_id) {
             if fennara_bound {
-                if let Some((tool, arguments)) = fennara_approval_call(&mcp_calls, &message) {
+                if let Some((_call_id, tool, arguments)) = fennara_approval_call(&mcp_calls, &message) {
                     let decision = fennara_decision(&request.approval_mode, tool, arguments);
                     match decision {
                         PermissionDecision::Allow | PermissionDecision::Deny { .. } => {
@@ -404,11 +404,12 @@ where
                 .flatten();
             let keep_going = on_event(StreamEvent::Approval(super::types::ProviderApproval {
                 name: tool_details
-                    .map(|(name, _)| name)
+                    .map(|(_, name, _)| name)
                     .unwrap_or_else(|| message["method"].as_str().unwrap_or("Codex approval"))
                     .to_string(),
+                item_id: tool_details.map(|(id, _, _)| id.to_string()),
                 details: message["params"].clone(),
-                permission: tool_details.map(|(name, args)| {
+                permission: tool_details.map(|(_, name, args)| {
                     PermissionPolicy::new(clean_approval_mode(&request.approval_mode))
                         .evaluate_tool(name, args)
                 }),
@@ -470,8 +471,15 @@ where
                 }
             }
             "item/started" => {
-                if let Some(status) = item_status_message(params.get("item"), false) {
-                    if !on_event(StreamEvent::Status { message: status }).await? {
+                if let Some((id, name, arguments, raw)) = tracked_tool_call(params.get("item")) {
+                    if !on_event(StreamEvent::ToolCall {
+                        id,
+                        name,
+                        arguments: arguments.to_string(),
+                        raw,
+                    })
+                    .await?
+                    {
                         connection.interrupt_turn(&thread_id).await;
                         connection.shutdown().await;
                         return Ok(());
@@ -479,8 +487,8 @@ where
                 }
             }
             "item/completed" => {
-                if let Some(status) = item_status_message(params.get("item"), true) {
-                    if !on_event(StreamEvent::Status { message: status }).await? {
+                if let Some(event) = tracked_tool_result(params.get("item")) {
+                    if !on_event(event).await? {
                         connection.interrupt_turn(&thread_id).await;
                         connection.shutdown().await;
                         return Ok(());
@@ -708,24 +716,202 @@ fn message_content(value: Option<&Value>) -> String {
     }
 }
 
-fn item_status_message(item: Option<&Value>, completed: bool) -> Option<String> {
+// Map provider-executed thread items onto Fennara's native tool card flow.
+// Field names follow the official app-server ThreadItem schema; items that are
+// partial or unknown are skipped instead of guessed.
+fn tracked_tool_call(item: Option<&Value>) -> Option<(String, String, Value, Value)> {
     let item = item?;
-    let item_type = item.get("type").and_then(Value::as_str)?;
-    let suffix = if completed { "completed" } else { "running" };
-    match item_type {
-        "commandExecution" => Some(format!("Codex command {suffix}")),
-        "fileChange" => Some(format!("Codex file change {suffix}")),
+    let id = item.get("id").and_then(Value::as_str)?.to_string();
+    let (name, arguments) = match item.get("type").and_then(Value::as_str)? {
         "mcpToolCall" => {
-            let name = item
-                .get("tool")
-                .or_else(|| item.get("name"))
-                .and_then(Value::as_str)
-                .unwrap_or("MCP tool");
-            Some(format!("Codex {name} {suffix}"))
+            let tool = item.get("tool").and_then(Value::as_str)?;
+            let name = match item.get("server").and_then(Value::as_str) {
+                Some(CHAT_MCP_SERVER) | None => tool.to_string(),
+                Some(server) => format!("{server}.{tool}"),
+            };
+            (name, normalize_item_arguments(item.get("arguments")))
         }
-        "webSearch" => Some(format!("Codex web search {suffix}")),
-        _ => None,
+        "commandExecution" => (
+            "codex_exec_command".to_string(),
+            json!({"command": item.get("command").and_then(Value::as_str)?}),
+        ),
+        "fileChange" => ("codex_file_change".to_string(), file_change_arguments(item)),
+        "webSearch" => (
+            "codex_web_search".to_string(),
+            json!({"query": item.get("query").and_then(Value::as_str)?}),
+        ),
+        _ => return None,
+    };
+    Some((id, name, arguments, item.clone()))
+}
+
+fn tracked_tool_result(item: Option<&Value>) -> Option<StreamEvent> {
+    let item = item?;
+    let (id, name, arguments, raw) = tracked_tool_call(Some(item))?;
+    let status = terminal_item_status(item)?;
+    let content = item_result_markdown(item);
+    Some(StreamEvent::ToolCallResult {
+        id,
+        name,
+        arguments,
+        status,
+        content,
+        raw,
+    })
+}
+
+// Translate the official item status onto Fennara's terminal tool statuses.
+// The completed notification itself is the completion signal, so an absent
+// status (webSearch items carry none) still records as done.
+fn terminal_item_status(item: &Value) -> Option<String> {
+    match item.get("status").and_then(Value::as_str) {
+        Some("inProgress") => None,
+        Some("failed") => Some("failed".to_string()),
+        Some("declined") => Some("denied".to_string()),
+        Some("completed") | None => Some("done".to_string()),
+        Some(_) => Some("failed".to_string()),
     }
+}
+
+fn normalize_item_arguments(value: Option<&Value>) -> Value {
+    match value {
+        Some(value @ Value::Object(_)) => value.clone(),
+        Some(other) if !other.is_null() => json!({ "value": other }),
+        _ => json!({}),
+    }
+}
+
+fn file_change_arguments(item: &Value) -> Value {
+    let changes = item
+        .get("changes")
+        .and_then(Value::as_array)
+        .map(|changes| {
+            changes
+                .iter()
+                .map(|change| {
+                    json!({
+                        "path": change.get("path").and_then(Value::as_str),
+                        "kind": change.get("kind").and_then(Value::as_str),
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Value::Array(changes)
+}
+
+const RESULT_DISPLAY_LIMIT: usize = 8000;
+
+fn item_result_markdown(item: &Value) -> String {
+    match item.get("type").and_then(Value::as_str) {
+        Some("mcpToolCall") => {
+            if let Some(error) = item.get("error").filter(|value| !value.is_null()) {
+                return format!(
+                    "Error: {}",
+                    error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("MCP tool call failed.")
+                );
+            }
+            let blocks = item
+                .pointer("/result/content")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let text = blocks
+                .iter()
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let images = blocks
+                .iter()
+                .filter(|block| block.get("type").and_then(Value::as_str) == Some("image"))
+                .count();
+            let mut content = if text.trim().is_empty() {
+                "(no text output)".to_string()
+            } else {
+                text
+            };
+            if images > 0 {
+                content.push_str(&format!("\n\n({images} image output(s) not shown)"));
+            }
+            content
+        }
+        Some("commandExecution") => {
+            let mut lines = vec![format!(
+                "$ {}",
+                item.get("command").and_then(Value::as_str).unwrap_or("")
+            )];
+            if let Some(exit_code) = item.get("exitCode").filter(|value| !value.is_null()) {
+                lines.push(format!("exit code: {exit_code}"));
+            }
+            if let Some(output) = item
+                .get("aggregatedOutput")
+                .and_then(Value::as_str)
+                .filter(|output| !output.trim().is_empty())
+            {
+                lines.push(String::new());
+                lines.push(truncate_for_display(output));
+            }
+            lines.join("\n")
+        }
+        Some("fileChange") => {
+            let changes = item
+                .get("changes")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let mut sections = Vec::new();
+            for change in &changes {
+                let path = change.get("path").and_then(Value::as_str).unwrap_or("");
+                let kind = change.get("kind").and_then(Value::as_str).unwrap_or("update");
+                sections.push(format!("**{kind}** `{path}`\n\n```diff\n{}\n```", truncate_for_display(
+                    change.get("diff").and_then(Value::as_str).unwrap_or(""),
+                )));
+            }
+            if sections.is_empty() {
+                "(no file changes)".to_string()
+            } else {
+                truncate_for_display(&sections.join("\n\n"))
+            }
+        }
+        Some("webSearch") => {
+            let query = item.get("query").and_then(Value::as_str).unwrap_or("");
+            let results = item.get("results").and_then(Value::as_array);
+            let mut lines = vec![format!("Search: {query}")];
+            if let Some(results) = results {
+                if results.is_empty() {
+                    lines.push("(no results)".to_string());
+                } else {
+                    for result in results {
+                        let title = result.get("title").and_then(Value::as_str);
+                        let url = result.get("url").and_then(Value::as_str);
+                        match (title, url) {
+                            (Some(title), Some(url)) => {
+                                lines.push(format!("- [{title}]({url})"));
+                            }
+                            _ => {
+                                lines.push(format!("- {}", result.to_string()));
+                            }
+                        }
+                    }
+                }
+            }
+            truncate_for_display(&lines.join("\n"))
+        }
+        _ => truncate_for_display(&item.to_string()),
+    }
+}
+
+fn truncate_for_display(text: &str) -> String {
+    const MARKER: &str = "\n… (output truncated)";
+    if text.chars().count() <= RESULT_DISPLAY_LIMIT {
+        return text.to_string();
+    }
+    let mut truncated: String = text.chars().take(RESULT_DISPLAY_LIMIT).collect();
+    truncated.push_str(MARKER);
+    truncated
 }
 
 fn plan_status_message(params: &Value) -> Option<String> {
@@ -1138,7 +1324,7 @@ fn track_mcp_call(
 fn fennara_approval_call<'a>(
     calls: &'a std::collections::HashMap<String, Value>,
     message: &Value,
-) -> Option<(&'a str, &'a Value)> {
+) -> Option<(&'a str, &'a str, &'a Value)> {
     let params = &message["params"];
     if message["method"] != "mcpServer/elicitation/request"
         || params["serverName"] != CHAT_MCP_SERVER
@@ -1148,6 +1334,7 @@ fn fennara_approval_call<'a>(
     let arguments = params.pointer("/_meta/tool_params")?;
     let mut matching = calls.values().filter_map(|call| {
         let item = &call["item"];
+        let id = item["id"].as_str()?;
         let name = item["tool"].as_str()?;
         let expected = format!("Allow the {CHAT_MCP_SERVER} MCP server to run tool \"{name}\"?");
         (call["threadId"] == params["threadId"]
@@ -1155,7 +1342,7 @@ fn fennara_approval_call<'a>(
             && item["server"] == CHAT_MCP_SERVER
             && &item["arguments"] == arguments
             && params["message"].as_str() == Some(expected.as_str()))
-        .then_some((name, &item["arguments"]))
+            .then_some((id, name, &item["arguments"]))
     });
     let first = matching.next()?;
     matching.next().is_none().then_some(first)
@@ -1366,7 +1553,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
                     let message = connection.read_message().await.unwrap();
                     track_mcp_call(&mut calls, &message, id);
                     if let Some((allow, deny)) = approval_responses(&message, id) {
-                        let (name,args) = fennara_approval_call(&calls, &message).unwrap_or_else(|| panic!("Unmatched approval: {message}; active: {calls:?}"));
+                        let (_call_id,name,args) = fennara_approval_call(&calls, &message).unwrap_or_else(|| panic!("Unmatched approval: {message}; active: {calls:?}"));
                         assert_eq!(name, tool);
                         let decision = fennara_decision(mode, name, args);
                         assert_eq!(matches!(decision, PermissionDecision::Allow), expected);
@@ -1613,6 +1800,117 @@ rl.on('line', line => {
         ]);
         assert!(prompt.contains("[system]"));
         assert!(prompt.contains("Create a node."));
+    }
+
+    #[test]
+    fn tracked_tool_items_map_onto_native_tool_cards() {
+        let started = json!({
+            "id": "item-1", "type": "mcpToolCall", "server": CHAT_MCP_SERVER,
+            "tool": "project_settings", "arguments": {"action": "get"}, "status": "inProgress"
+        });
+        let (id, name, arguments, _) = tracked_tool_call(Some(&started)).unwrap();
+        assert_eq!((id.as_str(), name.as_str()), ("item-1", "project_settings"));
+        assert_eq!(arguments, json!({ "action": "get" }));
+
+        let external = json!({
+            "id": "item-2", "type": "mcpToolCall", "server": "other", "tool": "query",
+            "arguments": "raw", "status": "completed",
+            "result": { "content": [
+                { "type": "text", "text": "42" },
+                { "type": "image", "data": "..." }
+            ] }
+        });
+        let (id, name, arguments, _) = tracked_tool_call(Some(&external)).unwrap();
+        assert_eq!((id.as_str(), name.as_str()), ("item-2", "other.query"));
+        assert_eq!(arguments, json!({ "value": "raw" }));
+        match tracked_tool_result(Some(&external)).unwrap() {
+            StreamEvent::ToolCallResult { id, status, content, .. } => {
+                assert_eq!(id, "item-2");
+                assert_eq!(status, "done");
+                assert!(content.contains("42"));
+                assert!(content.contains("1 image output(s) not shown"));
+            }
+            _ => panic!("expected a ToolCallResult event"),
+        }
+
+        let error = json!({
+            "id": "item-2b", "type": "mcpToolCall", "server": CHAT_MCP_SERVER,
+            "tool": "write_or_update_file", "arguments": {}, "status": "failed",
+            "error": { "message": "permission denied" }
+        });
+        match tracked_tool_result(Some(&error)).unwrap() {
+            StreamEvent::ToolCallResult { status, content, .. } => {
+                assert_eq!(status, "failed");
+                assert!(content.contains("permission denied"));
+            }
+            _ => panic!("expected a ToolCallResult event"),
+        }
+
+        let command = json!({
+            "id": "item-3", "type": "commandExecution", "command": "rg -n pattern",
+            "cwd": "/repo", "status": "declined", "exitCode": null, "aggregatedOutput": null
+        });
+        match tracked_tool_result(Some(&command)).unwrap() {
+            StreamEvent::ToolCallResult { id, name, status, content, .. } => {
+                assert_eq!(id, "item-3");
+                assert_eq!(name, "codex_exec_command");
+                assert_eq!(status, "denied");
+                assert!(content.contains("$ rg -n pattern"));
+            }
+            _ => panic!("expected a ToolCallResult event"),
+        }
+
+        let change = json!({
+            "id": "item-4", "type": "fileChange", "status": "failed",
+            "changes": [ { "path": "res://main.gd", "kind": "update", "diff": "+print()" } ]
+        });
+        match tracked_tool_result(Some(&change)).unwrap() {
+            StreamEvent::ToolCallResult { status, content, .. } => {
+                assert_eq!(status, "failed");
+                assert!(content.contains("res://main.gd"));
+                assert!(content.contains("```diff"));
+            }
+            _ => panic!("expected a ToolCallResult event"),
+        }
+
+        let search = json!({
+            "id": "item-5", "type": "webSearch", "query": "godot docs",
+            "results": [ { "title": "Docs", "url": "https://docs.godotengine.org" } ]
+        });
+        match tracked_tool_result(Some(&search)).unwrap() {
+            StreamEvent::ToolCallResult { name, content, .. } => {
+                assert_eq!(name, "codex_web_search");
+                assert!(content.contains("[Docs](https://docs.godotengine.org)"));
+            }
+            _ => panic!("expected a ToolCallResult event"),
+        }
+
+        assert!(tracked_tool_call(Some(&json!({
+            "id": "m", "type": "agentMessage", "text": "hi"
+        })))
+        .is_none());
+        assert!(tracked_tool_result(Some(&json!({
+            "id": "i", "type": "mcpToolCall", "server": CHAT_MCP_SERVER,
+            "tool": "t", "arguments": {}, "status": "inProgress"
+        })))
+        .is_none());
+        assert!(tracked_tool_call(Some(&json!({ "type": "webSearch", "query": "q" }))).is_none());
+    }
+
+    #[test]
+    fn long_tool_output_is_truncated_for_display() {
+        let long = "x".repeat(RESULT_DISPLAY_LIMIT + 100);
+        let command = json!({
+            "id": "i", "type": "commandExecution", "command": "c",
+            "status": "completed", "exitCode": 0, "aggregatedOutput": long
+        });
+        match tracked_tool_result(Some(&command)).unwrap() {
+            StreamEvent::ToolCallResult { content, .. } => {
+                assert!(content.contains("output truncated"));
+                assert!(content.chars().count() < RESULT_DISPLAY_LIMIT + 100);
+            }
+            _ => panic!("expected a ToolCallResult event"),
+        }
     }
 
     #[test]

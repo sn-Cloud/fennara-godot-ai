@@ -120,6 +120,14 @@ enforcement. Fennara does not read or store ChatGPT tokens.
 Codex streamed reply text is retained in the final completion used to save and
 refresh chat history.
 
+Codex tool activity renders and records through Fennara's native tool cards.
+The official `item/started` and `item/completed` notifications for MCP tool
+calls, command executions, file changes, and web searches map onto the same
+`function_call` and `tool_result` transcript items used by the other built-in
+providers, so tool cards, persisted results, history replay, and traces follow
+one pipeline instead of transient status text. A tool approval and its result
+share one card id. Command output and diffs are truncated for display.
+
 Codex chat starts the matching bundled MCP runtime as `fennara_chat`, with an
 explicit `--project-path` binding. This thread-local configuration disables the
 legacy `fennara` MCP entry for this chat only; it never changes external clients'

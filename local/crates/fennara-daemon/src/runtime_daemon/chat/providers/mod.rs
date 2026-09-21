@@ -708,6 +708,23 @@ impl StreamAccumulator {
                     message,
                 });
             }
+            StreamEvent::ToolCallResult {
+                id,
+                name,
+                arguments,
+                status,
+                content,
+                raw,
+            } => {
+                items.push(StreamItem::FunctionCallResult {
+                    id,
+                    name,
+                    arguments,
+                    status,
+                    content,
+                    raw,
+                });
+            }
             StreamEvent::Status { message } => {
                 items.push(StreamItem::Status { message });
             }

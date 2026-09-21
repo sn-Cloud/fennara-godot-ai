@@ -11,7 +11,7 @@ use super::super::{
         ChatCompletion, ChatRequest, FinishReason, LlmError, ProviderSettings, StreamItem,
         stream_chat,
     },
-    send_json, tools, trace,
+    send_error, send_json, store, tools, trace,
 };
 use super::is_chat_cancelled;
 
@@ -245,6 +245,83 @@ where
                         )
                         .await?;
                     }
+                    // A tool the provider already executed itself. Persist it
+                    // with the same store calls as Fennara-executed tools so
+                    // the card, transcript, and replay stay on one pipeline.
+                    StreamItem::FunctionCallResult { id, name, arguments, status, content, raw } => {
+                        if let Some(tool) = provisional_tools.get_mut(&id) {
+                            tool.terminal = true;
+                        }
+                        let tool_trace = trace.with_tool_call(id.clone());
+                        let metadata = json!({
+                            "tool_name": name.as_str(),
+                            "status": status.as_str(),
+                            "executed_by": "codex"
+                        });
+                        let persisted = store::upsert_tool_call(
+                            chat_id,
+                            assistant_message_id,
+                            None,
+                            &id,
+                            None,
+                            &name,
+                            &arguments,
+                            &status,
+                        )
+                        .and_then(|_| {
+                            store::finish_tool_call_with_message(
+                                chat_id,
+                                &id,
+                                &name,
+                                &status,
+                                &raw,
+                                &content,
+                                &content,
+                                &metadata,
+                                &[],
+                            )
+                            .map(|_| ())
+                        });
+                        match persisted {
+                            Ok(()) => {
+                                tool_trace.event_status(
+                                    "tool.result.persisted",
+                                    &status,
+                                    json!({
+                                        "tool_name": name.as_str(),
+                                        "content_bytes": content.len()
+                                    }),
+                                );
+                            }
+                            Err(error) => {
+                                tool_trace.error(
+                                    "tool.result.persisted",
+                                    "failed",
+                                    json!({
+                                        "tool_name": name.as_str(),
+                                        "message": error.as_str()
+                                    }),
+                                );
+                                send_error(sender, request_id.clone(), "chat_store_failed", &error)
+                                    .await?;
+                            }
+                        }
+                        send_json(
+                            sender,
+                            json!({
+                                "type": "chat_item_update",
+                                "request_id": request_id.clone(),
+                                "item": {
+                                    "id": id,
+                                    "type": "tool_result",
+                                    "name": name,
+                                    "content": content,
+                                    "status": status
+                                }
+                            }),
+                        )
+                        .await?;
+                    }
                     StreamItem::Status { message } => {
                         send_json(
                             sender,
@@ -359,13 +436,17 @@ where
     let Some(responder) = approval.responder.lock().await.take() else {
         return Ok(());
     };
-    let id = format!(
-        "codex-approval-{}",
-        state
-            .request_counter
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-            + 1
-    );
+    // Reuse the provider's tool call id when known so the approval card and
+    // the later tool result card are one card, as in Fennara's native flow.
+    let id = approval.item_id.clone().unwrap_or_else(|| {
+        format!(
+            "codex-approval-{}",
+            state
+                .request_counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1
+        )
+    });
     let (tx, rx) = oneshot::channel();
     let mut request = ToolApprovalRequest {
         id: id.clone(),
@@ -437,7 +518,10 @@ fn stream_item_has_assistant_output(item: &StreamItem) -> bool {
         | StreamItem::FunctionCall { .. }
         | StreamItem::FunctionCallError { .. } => true,
         StreamItem::Reasoning { content, .. } => !content.trim().is_empty(),
-        StreamItem::Status { .. } | StreamItem::Usage(_) | StreamItem::Approval(_) => false,
+        StreamItem::Status { .. }
+        | StreamItem::Usage(_)
+        | StreamItem::Approval(_)
+        | StreamItem::FunctionCallResult { .. } => false,
     }
 }
 
@@ -599,6 +683,7 @@ mod tests {
             let (tx, rx) = oneshot::channel();
             let approval = super::super::super::providers::ProviderApproval {
                 name: "mcpServer/elicitation/request".into(),
+                item_id: None,
                 details: json!({"message":"Run fixture tool?"}),
                 permission: None,
                 responder: std::sync::Arc::new(tokio::sync::Mutex::new(Some(tx))),
