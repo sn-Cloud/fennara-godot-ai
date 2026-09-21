@@ -126,7 +126,9 @@ calls, command executions, file changes, and web searches map onto the same
 `function_call` and `tool_result` transcript items used by the other built-in
 providers, so tool cards, persisted results, history replay, and traces follow
 one pipeline instead of transient status text. A tool approval and its result
-share one card id. Command output and diffs are truncated for display.
+share one card id. Command output and diffs are truncated for display. Results
+of tools that already executed are persisted even when the turn later fails,
+so the transcript keeps a record of completed work.
 
 Codex chat starts the matching bundled MCP runtime as `fennara_chat`, with an
 explicit `--project-path` binding. This thread-local configuration disables the

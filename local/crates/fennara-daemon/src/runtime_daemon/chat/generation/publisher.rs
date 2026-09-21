@@ -116,19 +116,8 @@ where
     // provider wrapper resolves the completion, so all queued events —
     // including persisted tool results — are handled before the loop exits.
     let completion = loop {
-        tokio::select! {
-            biased;
-            item = item_rx.recv() => {
-                let Some(item) = item else {
-                    // The item channel closed after the provider task sent
-                    // its completion, so that result is already waiting.
-                    break done_rx.await.unwrap_or_else(|_| Err(LlmError::ProviderApi {
-                        provider: "chat".to_string(),
-                        status: None,
-                        message: "Chat provider task ended unexpectedly.".to_string(),
-                        retryable: false,
-                    }));
-                };
+        match next_stream_step(&mut item_rx, &mut done_rx).await {
+            StreamStep::Item(item) => {
                 if stream_item_has_assistant_output(&item) {
                     emitted_output = true;
                 }
@@ -322,14 +311,7 @@ where
                     }
                 }
             }
-            result = &mut done_rx => {
-                break result.unwrap_or_else(|_| Err(LlmError::ProviderApi {
-                    provider: "chat".to_string(),
-                    status: None,
-                    message: "Chat provider task ended unexpectedly.".to_string(),
-                    retryable: false,
-                }));
-            }
+            StreamStep::Completion(result) => break result,
         }
     };
 
@@ -367,88 +349,15 @@ where
                 message,
             )
             .await?;
-            // Persist provider-executed tool results now that the stream has
-            // settled, using the same store calls as Fennara-executed tools.
-            // tool_calls_json only references results that actually landed,
-            // because replay drops an assistant group with missing results.
-            let mut persisted_tool_calls = Vec::new();
-            for result in &recorded_tool_results {
-                let metadata = json!({
-                    "tool_name": result.name.as_str(),
-                    "status": result.status.as_str(),
-                    "executed_by": "codex"
-                });
-                let tool_trace = trace.with_tool_call(result.id.clone());
-                let persisted = store::upsert_tool_call(
-                    chat_id,
-                    assistant_message_id,
-                    None,
-                    &result.id,
-                    None,
-                    &result.name,
-                    &result.arguments,
-                    &result.status,
-                )
-                .and_then(|_| {
-                    store::finish_tool_call_with_message(
-                        chat_id,
-                        &result.id,
-                        &result.name,
-                        &result.status,
-                        &result.raw,
-                        &result.content,
-                        &result.content,
-                        &metadata,
-                        &[],
-                    )
-                    .map(|_| ())
-                });
-                match persisted {
-                    Ok(()) => {
-                        tool_trace.event_status(
-                            "tool.result.persisted",
-                            &result.status,
-                            json!({
-                                "tool_name": result.name.as_str(),
-                                "content_bytes": result.content.len()
-                            }),
-                        );
-                        persisted_tool_calls.push(json!({
-                            "id": result.id,
-                            "type": "function",
-                            "function": {
-                                "name": result.name,
-                                "arguments": result.arguments.to_string()
-                            }
-                        }));
-                    }
-                    Err(error) => {
-                        tool_trace.error(
-                            "tool.result.persisted",
-                            "failed",
-                            json!({
-                                "tool_name": result.name.as_str(),
-                                "message": error.as_str()
-                            }),
-                        );
-                        send_error(sender, request_id.clone(), "chat_store_failed", &error)
-                            .await?;
-                    }
-                }
-            }
-            if !persisted_tool_calls.is_empty() {
-                if let Err(error) = store::attach_tool_calls_to_message(
-                    assistant_message_id,
-                    &Value::Array(persisted_tool_calls),
-                ) {
-                    trace.error(
-                        "assistant.tool_calls.attach",
-                        "failed",
-                        json!({ "message": error.as_str() }),
-                    );
-                    send_error(sender, request_id.clone(), "chat_store_failed", &error).await?;
-                }
-            }
+            persist_recorded_tool_results(
+                sender,
+                request_id.clone(),
+                chat_id,
+                assistant_message_id,
+                &recorded_tool_results,
+                &trace,
+            )
+            .await?;
             Ok(Ok(StreamedAssistant {
                 completion,
                 usage,
@@ -469,12 +378,157 @@ where
                 "Provider stream ended before this tool call finalized.",
             )
             .await?;
+            // The provider already executed these tools — possibly changing
+            // the project — so their records must survive a failed turn even
+            // though the replay layer excludes a failed assistant message.
+            persist_recorded_tool_results(
+                sender,
+                request_id.clone(),
+                chat_id,
+                assistant_message_id,
+                &recorded_tool_results,
+                &trace,
+            )
+            .await?;
             Ok(Err(AssistantStreamError {
                 error,
                 emitted_output,
             }))
         }
     }
+}
+
+enum StreamStep {
+    Item(StreamItem),
+    Completion(Result<ChatCompletion, LlmError>),
+}
+
+// The provider wrapper resolves the completion only after every item callback
+// returned, so polling the item channel first drains all queued events —
+// including persisted tool results — before the completion is observed. A
+// closed item channel means the completion was already sent and is waiting.
+async fn next_stream_step(
+    item_rx: &mut mpsc::UnboundedReceiver<StreamItem>,
+    done_rx: &mut oneshot::Receiver<Result<ChatCompletion, LlmError>>,
+) -> StreamStep {
+    tokio::select! {
+        biased;
+        item = item_rx.recv() => match item {
+            Some(item) => StreamStep::Item(item),
+            None => StreamStep::Completion(
+                done_rx.await.unwrap_or_else(|_| Err(provider_task_ended_error())),
+            ),
+        },
+        result = &mut *done_rx => StreamStep::Completion(
+            result.unwrap_or_else(|_| Err(provider_task_ended_error())),
+        )
+    }
+}
+
+fn provider_task_ended_error() -> LlmError {
+    LlmError::ProviderApi {
+        provider: "chat".to_string(),
+        status: None,
+        message: "Chat provider task ended unexpectedly.".to_string(),
+        retryable: false,
+    }
+}
+
+// Persist provider-executed tool results once the provider stream settled,
+// using the same store calls as Fennara-executed tools. Runs for completed
+// and failed turns alike. tool_calls_json only references results that
+// actually landed, because replay drops an assistant group with missing
+// results.
+async fn persist_recorded_tool_results<S>(
+    sender: &mut S,
+    request_id: Option<String>,
+    chat_id: &str,
+    assistant_message_id: &str,
+    results: &[RecordedToolResult],
+    trace: &trace::TraceRecorder,
+) -> Result<(), S::Error>
+where
+    S: Sink<Message> + Unpin,
+    S::Error: std::fmt::Debug,
+{
+    let mut persisted_tool_calls = Vec::new();
+    for result in results {
+        let metadata = json!({
+            "tool_name": result.name.as_str(),
+            "status": result.status.as_str(),
+            "executed_by": "codex"
+        });
+        let tool_trace = trace.with_tool_call(result.id.clone());
+        let persisted = store::upsert_tool_call(
+            chat_id,
+            assistant_message_id,
+            None,
+            &result.id,
+            None,
+            &result.name,
+            &result.arguments,
+            &result.status,
+        )
+        .and_then(|_| {
+            store::finish_tool_call_with_message(
+                chat_id,
+                &result.id,
+                &result.name,
+                &result.status,
+                &result.raw,
+                &result.content,
+                &result.content,
+                &metadata,
+                &[],
+            )
+            .map(|_| ())
+        });
+        match persisted {
+            Ok(()) => {
+                tool_trace.event_status(
+                    "tool.result.persisted",
+                    &result.status,
+                    json!({
+                        "tool_name": result.name.as_str(),
+                        "content_bytes": result.content.len()
+                    }),
+                );
+                persisted_tool_calls.push(json!({
+                    "id": &result.id,
+                    "type": "function",
+                    "function": {
+                        "name": &result.name,
+                        "arguments": result.arguments.to_string()
+                    }
+                }));
+            }
+            Err(error) => {
+                tool_trace.error(
+                    "tool.result.persisted",
+                    "failed",
+                    json!({
+                        "tool_name": result.name.as_str(),
+                        "message": error.as_str()
+                    }),
+                );
+                send_error(sender, request_id.clone(), "chat_store_failed", &error).await?;
+            }
+        }
+    }
+    if !persisted_tool_calls.is_empty() {
+        if let Err(error) = store::attach_tool_calls_to_message(
+            assistant_message_id,
+            &Value::Array(persisted_tool_calls),
+        ) {
+            trace.error(
+                "assistant.tool_calls.attach",
+                "failed",
+                json!({ "message": error.as_str() }),
+            );
+            send_error(sender, request_id, "chat_store_failed", &error).await?;
+        }
+    }
+    Ok(())
 }
 
 // Reuse the existing session-bound approval UI. A disconnected UI, timeout or
@@ -733,6 +787,57 @@ fn tool_call_arguments(call: &Value) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn chat_completion_fixture() -> ChatCompletion {
+        ChatCompletion {
+            content: "done".to_string(),
+            tool_calls: Vec::new(),
+            finish_reason: FinishReason::Stop,
+            tool_call_observation: Default::default(),
+        }
+    }
+
+    // Pre-queue items so both channels are ready at once — the exact race
+    // that dropped tail tool results before items were drained ahead of the
+    // completion signal.
+    #[tokio::test]
+    async fn queued_stream_items_drain_before_the_completion_is_observed() {
+        let (item_tx, mut item_rx) = mpsc::unbounded_channel::<StreamItem>();
+        let (done_tx, mut done_rx) = oneshot::channel::<Result<ChatCompletion, LlmError>>();
+        item_tx
+            .send(StreamItem::Status { message: "one".into() })
+            .unwrap();
+        item_tx
+            .send(StreamItem::Status { message: "two".into() })
+            .unwrap();
+        drop(item_tx);
+        done_tx.send(Ok(chat_completion_fixture())).unwrap();
+
+        let mut seen = Vec::new();
+        let completion = loop {
+            match next_stream_step(&mut item_rx, &mut done_rx).await {
+                StreamStep::Item(StreamItem::Status { message }) => seen.push(message),
+                StreamStep::Item(_) => seen.push("other".to_string()),
+                StreamStep::Completion(result) => break result,
+            }
+        };
+        assert_eq!(completion.unwrap().content, "done");
+        assert_eq!(seen, vec!["one".to_string(), "two".to_string()]);
+    }
+
+    // A closed item channel must still yield the already-sent completion
+    // instead of spinning on recv()'s None.
+    #[tokio::test]
+    async fn closed_item_channel_still_yields_the_sent_completion() {
+        let (item_tx, mut item_rx) = mpsc::unbounded_channel::<StreamItem>();
+        let (done_tx, mut done_rx) = oneshot::channel::<Result<ChatCompletion, LlmError>>();
+        drop(item_tx);
+        done_tx.send(Ok(chat_completion_fixture())).unwrap();
+        match next_stream_step(&mut item_rx, &mut done_rx).await {
+            StreamStep::Completion(Ok(completion)) => assert_eq!(completion.content, "done"),
+            _ => panic!("expected the queued completion"),
+        }
+    }
 
     // Exercise the same approval payload and session check used by the web UI.
     #[tokio::test]
