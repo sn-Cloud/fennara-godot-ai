@@ -632,6 +632,36 @@ fn cancel_turn_on_connection(
     Ok(message)
 }
 
+// Pair provider-executed tool results with the assistant message that produced
+// them so provider replay keeps the pair together. Only reference tool call ids
+// whose results were stored: replay drops an assistant group when a referenced
+// tool call has no following result.
+pub(crate) fn attach_tool_calls_to_message(
+    message_id: &str,
+    tool_calls: &Value,
+) -> Result<(), String> {
+    let conn = connection()?;
+    attach_tool_calls_to_message_on_connection(&conn, message_id, tool_calls)
+}
+
+pub(crate) fn attach_tool_calls_to_message_on_connection(
+    conn: &Connection,
+    message_id: &str,
+    tool_calls: &Value,
+) -> Result<(), String> {
+    let tool_calls_json = serde_json::to_string(tool_calls).map_err(|e| e.to_string())?;
+    let updated = conn
+        .execute(
+            "UPDATE chat_messages SET tool_calls_json = ?2, updated_at_ms = ?3 WHERE id = ?1",
+            params![message_id, tool_calls_json, now_ms()],
+        )
+        .map_err(to_store_error)?;
+    if updated == 0 {
+        return Err("Message not found.".to_string());
+    }
+    Ok(())
+}
+
 pub(crate) fn upsert_tool_call(
     chat_id: &str,
     assistant_message_id: &str,

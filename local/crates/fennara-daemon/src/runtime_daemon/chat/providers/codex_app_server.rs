@@ -791,13 +791,19 @@ fn file_change_arguments(item: &Value) -> Value {
                 .map(|change| {
                     json!({
                         "path": change.get("path").and_then(Value::as_str),
-                        "kind": change.get("kind").and_then(Value::as_str),
+                        "kind": change_kind(change),
                     })
                 })
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    Value::Array(changes)
+    json!({ "changes": changes })
+}
+
+// The official PatchChangeKind is a tagged object such as {"type":"add"},
+// not a bare string; update may also carry a move_path.
+fn change_kind(change: &Value) -> Option<&str> {
+    change.pointer("/kind/type").and_then(Value::as_str)
 }
 
 const RESULT_DISPLAY_LIMIT: usize = 8000;
@@ -865,10 +871,14 @@ fn item_result_markdown(item: &Value) -> String {
             let mut sections = Vec::new();
             for change in &changes {
                 let path = change.get("path").and_then(Value::as_str).unwrap_or("");
-                let kind = change.get("kind").and_then(Value::as_str).unwrap_or("update");
-                sections.push(format!("**{kind}** `{path}`\n\n```diff\n{}\n```", truncate_for_display(
-                    change.get("diff").and_then(Value::as_str).unwrap_or(""),
-                )));
+                let heading = match change_kind(change) {
+                    Some(kind) => format!("**{kind}** `{path}`"),
+                    None => format!("`{path}`"),
+                };
+                sections.push(format!(
+                    "{heading}\n\n```diff\n{}\n```",
+                    truncate_for_display(change.get("diff").and_then(Value::as_str).unwrap_or(""))
+                ));
             }
             if sections.is_empty() {
                 "(no file changes)".to_string()
@@ -1862,16 +1872,30 @@ rl.on('line', line => {
 
         let change = json!({
             "id": "item-4", "type": "fileChange", "status": "failed",
-            "changes": [ { "path": "res://main.gd", "kind": "update", "diff": "+print()" } ]
+            "changes": [
+                { "path": "res://main.gd", "kind": { "type": "update" }, "diff": "+print()" },
+                { "path": "res://new.gd", "kind": { "type": "add" }, "diff": "+new" },
+                { "path": "res://old.gd", "kind": { "type": "delete" }, "diff": "-gone" }
+            ]
         });
-        match tracked_tool_result(Some(&change)).unwrap() {
-            StreamEvent::ToolCallResult { status, content, .. } => {
+        let arguments = match tracked_tool_result(Some(&change)).unwrap() {
+            StreamEvent::ToolCallResult { arguments, status, content, .. } => {
                 assert_eq!(status, "failed");
-                assert!(content.contains("res://main.gd"));
+                assert!(content.contains("**update** `res://main.gd`"));
+                assert!(content.contains("**add** `res://new.gd`"));
+                assert!(content.contains("**delete** `res://old.gd`"));
                 assert!(content.contains("```diff"));
+                arguments
             }
             _ => panic!("expected a ToolCallResult event"),
-        }
+        };
+        let kinds: Vec<&str> = arguments["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry["kind"].as_str())
+            .collect();
+        assert_eq!(kinds, vec!["update", "add", "delete"]);
 
         let search = json!({
             "id": "item-5", "type": "webSearch", "query": "godot docs",

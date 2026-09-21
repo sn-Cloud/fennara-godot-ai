@@ -34,6 +34,17 @@ struct ProvisionalTool {
     delta_count: usize,
 }
 
+// A provider-executed tool result awaiting durable persistence once the
+// provider stream settles.
+struct RecordedToolResult {
+    id: String,
+    name: String,
+    arguments: Value,
+    status: String,
+    content: String,
+    raw: Value,
+}
+
 pub(super) async fn stream_one_assistant<S>(
     sender: &mut S,
     request_id: Option<String>,
@@ -98,13 +109,25 @@ where
     let mut usage: Option<Value> = None;
     let mut reasoning_content: Option<String> = None;
     let mut provisional_tools: HashMap<String, ProvisionalTool> = HashMap::new();
+    let mut recorded_tool_results: Vec<RecordedToolResult> = Vec::new();
     let mut emitted_output = false;
     let mut done_rx = done_rx;
+    // Poll the item channel first. Every item callback returns before the
+    // provider wrapper resolves the completion, so all queued events —
+    // including persisted tool results — are handled before the loop exits.
     let completion = loop {
         tokio::select! {
+            biased;
             item = item_rx.recv() => {
                 let Some(item) = item else {
-                    continue;
+                    // The item channel closed after the provider task sent
+                    // its completion, so that result is already waiting.
+                    break done_rx.await.unwrap_or_else(|_| Err(LlmError::ProviderApi {
+                        provider: "chat".to_string(),
+                        status: None,
+                        message: "Chat provider task ended unexpectedly.".to_string(),
+                        retryable: false,
+                    }));
                 };
                 if stream_item_has_assistant_output(&item) {
                     emitted_output = true;
@@ -245,82 +268,38 @@ where
                         )
                         .await?;
                     }
-                    // A tool the provider already executed itself. Persist it
-                    // with the same store calls as Fennara-executed tools so
-                    // the card, transcript, and replay stay on one pipeline.
+                    // A tool the provider already executed itself. The card
+                    // update flows immediately; durable persistence happens
+                    // once the stream settles, after the completion breaks the
+                    // loop above.
                     StreamItem::FunctionCallResult { id, name, arguments, status, content, raw } => {
                         if let Some(tool) = provisional_tools.get_mut(&id) {
                             tool.terminal = true;
                         }
-                        let tool_trace = trace.with_tool_call(id.clone());
-                        let metadata = json!({
-                            "tool_name": name.as_str(),
-                            "status": status.as_str(),
-                            "executed_by": "codex"
-                        });
-                        let persisted = store::upsert_tool_call(
-                            chat_id,
-                            assistant_message_id,
-                            None,
-                            &id,
-                            None,
-                            &name,
-                            &arguments,
-                            &status,
-                        )
-                        .and_then(|_| {
-                            store::finish_tool_call_with_message(
-                                chat_id,
-                                &id,
-                                &name,
-                                &status,
-                                &raw,
-                                &content,
-                                &content,
-                                &metadata,
-                                &[],
-                            )
-                            .map(|_| ())
-                        });
-                        match persisted {
-                            Ok(()) => {
-                                tool_trace.event_status(
-                                    "tool.result.persisted",
-                                    &status,
-                                    json!({
-                                        "tool_name": name.as_str(),
-                                        "content_bytes": content.len()
-                                    }),
-                                );
-                            }
-                            Err(error) => {
-                                tool_trace.error(
-                                    "tool.result.persisted",
-                                    "failed",
-                                    json!({
-                                        "tool_name": name.as_str(),
-                                        "message": error.as_str()
-                                    }),
-                                );
-                                send_error(sender, request_id.clone(), "chat_store_failed", &error)
-                                    .await?;
-                            }
-                        }
+                        let record = RecordedToolResult {
+                            id,
+                            name,
+                            arguments,
+                            status,
+                            content,
+                            raw,
+                        };
                         send_json(
                             sender,
                             json!({
                                 "type": "chat_item_update",
                                 "request_id": request_id.clone(),
                                 "item": {
-                                    "id": id,
+                                    "id": &record.id,
                                     "type": "tool_result",
-                                    "name": name,
-                                    "content": content,
-                                    "status": status
+                                    "name": &record.name,
+                                    "content": &record.content,
+                                    "status": &record.status
                                 }
                             }),
                         )
                         .await?;
+                        recorded_tool_results.push(record);
                     }
                     StreamItem::Status { message } => {
                         send_json(
@@ -388,6 +367,88 @@ where
                 message,
             )
             .await?;
+            // Persist provider-executed tool results now that the stream has
+            // settled, using the same store calls as Fennara-executed tools.
+            // tool_calls_json only references results that actually landed,
+            // because replay drops an assistant group with missing results.
+            let mut persisted_tool_calls = Vec::new();
+            for result in &recorded_tool_results {
+                let metadata = json!({
+                    "tool_name": result.name.as_str(),
+                    "status": result.status.as_str(),
+                    "executed_by": "codex"
+                });
+                let tool_trace = trace.with_tool_call(result.id.clone());
+                let persisted = store::upsert_tool_call(
+                    chat_id,
+                    assistant_message_id,
+                    None,
+                    &result.id,
+                    None,
+                    &result.name,
+                    &result.arguments,
+                    &result.status,
+                )
+                .and_then(|_| {
+                    store::finish_tool_call_with_message(
+                        chat_id,
+                        &result.id,
+                        &result.name,
+                        &result.status,
+                        &result.raw,
+                        &result.content,
+                        &result.content,
+                        &metadata,
+                        &[],
+                    )
+                    .map(|_| ())
+                });
+                match persisted {
+                    Ok(()) => {
+                        tool_trace.event_status(
+                            "tool.result.persisted",
+                            &result.status,
+                            json!({
+                                "tool_name": result.name.as_str(),
+                                "content_bytes": result.content.len()
+                            }),
+                        );
+                        persisted_tool_calls.push(json!({
+                            "id": result.id,
+                            "type": "function",
+                            "function": {
+                                "name": result.name,
+                                "arguments": result.arguments.to_string()
+                            }
+                        }));
+                    }
+                    Err(error) => {
+                        tool_trace.error(
+                            "tool.result.persisted",
+                            "failed",
+                            json!({
+                                "tool_name": result.name.as_str(),
+                                "message": error.as_str()
+                            }),
+                        );
+                        send_error(sender, request_id.clone(), "chat_store_failed", &error)
+                            .await?;
+                    }
+                }
+            }
+            if !persisted_tool_calls.is_empty() {
+                if let Err(error) = store::attach_tool_calls_to_message(
+                    assistant_message_id,
+                    &Value::Array(persisted_tool_calls),
+                ) {
+                    trace.error(
+                        "assistant.tool_calls.attach",
+                        "failed",
+                        json!({ "message": error.as_str() }),
+                    );
+                    send_error(sender, request_id.clone(), "chat_store_failed", &error).await?;
+                }
+            }
             Ok(Ok(StreamedAssistant {
                 completion,
                 usage,

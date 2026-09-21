@@ -289,6 +289,76 @@ fn finish_tool_call_with_message_persists_tool_result_atomically() {
 }
 
 #[test]
+fn attach_tool_calls_pairs_provider_results_for_replay() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    create_tool_persistence_schema(&conn);
+    conn.execute_batch(
+        "
+        INSERT INTO chats
+          (id, title, model, reasoning_effort, created_at_ms, updated_at_ms)
+          VALUES ('chat_1', 'Chat', 'codex/default', 'medium', 1, 1);
+        INSERT INTO chat_messages
+          (id, chat_id, role, status, content, sequence, created_at_ms, updated_at_ms)
+          VALUES
+          ('msg_user', 'chat_1', 'user', 'done', 'inspect the project', 1, 1, 1),
+          ('msg_assistant', 'chat_1', 'assistant', 'done', 'done checking', 2, 1, 1);
+        INSERT INTO chat_tool_calls
+          (id, chat_id, assistant_message_id, tool_name, arguments_json, status, created_at_ms, updated_at_ms)
+          VALUES ('call_1', 'chat_1', 'msg_assistant', 'project_settings', '{}', 'done', 1, 1);
+        ",
+    )
+    .unwrap();
+    tool_calls::finish_tool_call_with_message_on_connection(
+        &mut conn,
+        "chat_1",
+        "call_1",
+        "project_settings",
+        "done",
+        &json!({ "success": true }),
+        "model result",
+        "display result",
+        &json!({ "status": "done" }),
+        &[],
+    )
+    .unwrap();
+
+    // Without tool_calls_json on the assistant, provider replay treats the
+    // stored result as an orphan and drops it.
+    let before = replay::replay_groups_from_conn(&conn, "chat_1").unwrap();
+    assert!(before
+        .iter()
+        .flat_map(|group| group.rows.iter())
+        .all(|row| row.role != "tool"));
+
+    attach_tool_calls_to_message_on_connection(
+        &conn,
+        "msg_assistant",
+        &json!([{
+            "id": "call_1",
+            "type": "function",
+            "function": { "name": "project_settings", "arguments": "{}" }
+        }]),
+    )
+    .unwrap();
+
+    let after = replay::replay_groups_from_conn(&conn, "chat_1").unwrap();
+    let tool_rows: Vec<_> = after
+        .iter()
+        .flat_map(|group| group.rows.iter())
+        .filter(|row| row.role == "tool")
+        .collect();
+    assert_eq!(tool_rows.len(), 1);
+    assert_eq!(tool_rows[0].tool_call_id.as_deref(), Some("call_1"));
+    assert!(after
+        .iter()
+        .flat_map(|group| group.rows.iter())
+        .any(|row| row.id == "msg_assistant"));
+    assert!(
+        attach_tool_calls_to_message_on_connection(&conn, "missing", &json!([])).is_err()
+    );
+}
+
+#[test]
 fn finish_tool_call_with_message_rolls_back_tool_update_when_message_insert_fails() {
     let mut conn = Connection::open_in_memory().unwrap();
     create_tool_persistence_schema(&conn);
